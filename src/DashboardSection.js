@@ -1694,8 +1694,9 @@ function DeltaSection({baseData,scenData,colourMap,highlighted,isCategorical,
  *
  * @param {object[]} parsedCache - full dataset (all variables/scenarios), from App.js
  * @param {string} targetVariable - currently-selected variable to visualise
+ * @param {boolean} [showDelta=true] - whether the difference view is offered
  */
-export default function DashboardSection({parsedCache,targetVariable}){
+export default function DashboardSection({parsedCache,targetVariable,showDelta=true}){
   const {baselineData,scenarioData}=useAggregatedData(parsedCache,targetVariable);
   const [viewBy,        setViewBy]        =useState("Overall");
   const [chartType,     setChartType]     =useState("line");
@@ -1707,6 +1708,10 @@ export default function DashboardSection({parsedCache,targetVariable}){
   const [highlighted,   setHighlighted]   =useState(new Set());
   const [dataView,      setDataView]      =useState("both");
   const [showCI,        setShowCI]        =useState(true);
+
+  useEffect(()=>{
+    if (!showDelta) setActiveTab("timeseries");
+  },[showDelta]);
 
   const lineRef=useRef(), barRef=useRef();
   const containerRef=useRef();
@@ -1902,7 +1907,7 @@ export default function DashboardSection({parsedCache,targetVariable}){
           <div style={segGroup}>
             <button style={togBtn(chartType==="line"&&activeTab==="timeseries")} onClick={()=>{setChartType("line");setActiveTab("timeseries");}}>〜 Line</button>
             {isCategorical&&<button style={togBtn(chartType==="bar"&&activeTab==="timeseries")} onClick={()=>{setChartType("bar");setActiveTab("timeseries");}}>▦ Stacked</button>}
-            <button style={togBtn(activeTab==="delta")} onClick={()=>setActiveTab("delta")}>Δ Baseline → Scenario</button>
+            {showDelta&&<button style={togBtn(activeTab==="delta")} onClick={()=>setActiveTab("delta")}>Δ Baseline → Scenario</button>}
           </div>
 
           <span style={controlLabel}>View</span>
@@ -2174,7 +2179,7 @@ export default function DashboardSection({parsedCache,targetVariable}){
       )}
 
       {/* ════════ DELTA ════════ */}
-      {activeTab==="delta"&&(
+      {showDelta&&activeTab==="delta"&&(
         <DeltaSection baseData={baselineData} scenData={scenarioData}
           colourMap={colourMap} highlighted={highlighted} isCategorical={isCategorical}
           varValues={varValues} enabledVarVals={enabledVarVals}

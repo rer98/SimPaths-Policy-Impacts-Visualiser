@@ -2,7 +2,7 @@
 
 An interactive React + D3 dashboard for exploring outputs from SimPaths, a dynamic microsimulation model developed by the Centre for Microsimulation and Policy Analysis (CeMPA) at the University of Essex. Visualiser built by researchers at the University of Glasgow as part of the Policy Modelling for Health research group.
 
-The dashboard compares a Baseline run against a Policy Scenario across demographic, employment, income and health outcomes — as a time series, at a single year, or as the difference between the two — with all aggregation happening entirely client-side, in the browser.
+The dashboard compares a Baseline run against a Policy Scenario across demographic, employment, income and health outcomes — as a time series, at a single year, or as the difference between the two. Local simulation output is aggregated entirely client-side, in the browser. An embedding application can also supply already aggregated results through an optional interface.
 
 ---
 
@@ -16,6 +16,7 @@ The dashboard compares a Baseline run against a Policy Scenario across demograph
 - [Data inputs](#data-inputs)
   - [Default pre-aggregated dataset](#1-default-pre-aggregated-dataset)
   - [Bring your own simulation output](#2-bring-your-own-simulation-output)
+  - [Connect pre-aggregated results](#3-connect-pre-aggregated-results)
 - [How the aggregation pipeline works](#how-the-aggregation-pipeline-works)
 - [Dashboard views & controls](#dashboard-views--controls)
 - [Colour system](#colour-system)
@@ -34,7 +35,7 @@ The dashboard compares a Baseline run against a Policy Scenario across demograph
 - Three ways to view the data: time series, a single cross-sectional year, and Baseline → Scenario deltas.
 - Stratify any variable by Age, Gender, Household Type, Disability Status, Region, Ethnicity or Income Quintile, shown as small-multiple panels or combined onto one chart.
 - 95% confidence intervals computed across model runs; unreliable estimates (small underlying samples n<=10) are automatically suppressed rather than shown.
-- Two data sources: a pre-packaged default dataset, or point the dashboard at your own local SimPaths output folder — no upload, no server round-trip.
+- A pre-packaged default dataset or your own local SimPaths output folder — no upload or server round-trip for local files. An optional `dataSource` prop also accepts chart-ready aggregates from an embedding application.
 - Parallelised, memory-lean parsing: your own runs are read and aggregated by a pool of Web Workers, one run's CSV text in memory at a time per worker, so large multi-run folders don't blow out browser memory.
 - Export any chart panel as a PNG, or its underlying data as CSV.
 - Responsive layout, from a compact mobile view up to wide desktop screens.
@@ -46,7 +47,7 @@ The dashboard compares a Baseline run against a Policy Scenario across demograph
 - Web Workers (native, no bundler-specific worker loader) for parallel CSV parsing/aggregation
 - File System Access API (`window.showDirectoryPicker`) for reading local simulation output folders directly, with no file-by-file upload step
 
-No backend is required. This is a static, client-side application.
+No backend is required for the standalone application. A hosting service can supply pre-aggregated results without replacing the maintained page or charts.
 
 ## Project structure
 
@@ -54,6 +55,8 @@ No backend is required. This is a static, client-side application.
 src/
 ├── index.js               # React entry point (createRoot + <App />)
 ├── App.js                 # Page shell: header, intro card, sidebar, main viz, closing banner
+├── AggregateDataPanel.js   # Optional connected-source controls, status and role labels
+├── aggregateDataSource.js  # Aggregate row validation, missing values and display labels
 ├── DashboardSection.js     # All D3 chart rendering + view/filter controls
 ├── useAggregatedData.js    # Variable/stratifier definitions, colour engine, CSV row parser, data hook
 ├── parseCore.js            # Pure parsing + per-run aggregation logic (no browser APIs)
@@ -62,7 +65,7 @@ src/
 
 public/
 ├── pmh_logo.png                          # Header logo
-├── guidance_notes.pdf                    # Folder/file layout guidance for "Visualise Your Own Data"
+├── guidance_notes.pdf                    # Folder/file layout guidance for "Visualise Locally Saved Data"
 └── bottom_banner_image.png               # Optional — see "Customising the dashboard"
 ```
 
@@ -71,7 +74,7 @@ public/
 
 ## Data inputs
 
-The dashboard can be driven by either of two data sources, toggled from the Connect Data card in the sidebar.
+The standalone dashboard offers the default dataset and local-folder workflows. An embedding application can provide a third source through the optional interface described below.
 
 ### 1. Default pre-aggregated dataset
 
@@ -95,7 +98,7 @@ On load, the app fetches the preaggregated data and parses each row with `parseC
 
 ### 2. Bring your own simulation output
 
-Clicking "Visualise Your Own Data" opens a native folder picker. The selected parent folder must be laid out as:
+Clicking "Visualise Locally Saved Data" opens a native folder picker. The selected parent folder must be laid out as:
 
 ```
 YourSimulationOutput/
@@ -154,6 +157,102 @@ Expected raw columns (person and/or benefit CSV — see `COLUMN_MAP` in `parseCo
 
 Plus join/weighting keys: `time`/`Time`/`Year`, `id_BenefitUnit`/`idbu`/`idBu`, and an optional `wgt`/`Wgt` weight column (defaults to 1.0 per row if absent or invalid).
 
+### 3. Connect pre-aggregated results
+
+An embedding application can render `<App dataSource={...} />` with the same
+aggregate row shape used by the existing charts. This is an optional presentation
+interface: it does not add API URLs, authentication, server-side aggregation or
+new statistical calculations to the Visualiser. Rendering `<App />` continues
+to load the bundled dataset and offer the local-folder viewer.
+
+For example, a host that has already loaded authorised aggregate rows can use:
+
+```jsx
+import App from "./App";
+
+function ResultsView({ rows, comparison, message, onReload }) {
+  return <App dataSource={{
+    key: comparison.id,
+    rows,
+    label: "Online results",
+    names: {
+      baseline: comparison.baselineName,
+      scenario: comparison.scenarioName,
+    },
+    description: "These simulation results were aggregated by the hosting service.",
+    message,
+    controls: <button onClick={onReload}>Reload results</button>,
+    navigation: <a href="/">Return to SimPaths Online</a>,
+  }} />;
+}
+```
+
+| Field | Purpose |
+|---|---|
+| `rows` | Array of chart-ready aggregate rows; use `[]` while loading or unavailable. Omitted rows also mean an empty connected source. |
+| `key` | Optional string comparison identity. Change it when selecting a different comparison to reset chart filters and selections. |
+| `label` | Optional plain-text source label, such as `Online results`. Defaults to `Connected results`. |
+| `names.baseline`, `names.scenario` | Optional configuration names, shown alongside their roles in Connect Data and the comparison description. Without names, the labels remain `Baseline` and `Scenario`. |
+| `description`, `message`, `notice` | Optional plain-text source explanation, loading/error status and comparison notice. |
+| `controls` | Optional React content for host-owned source selection or retry controls, rendered in Connect Data. |
+| `navigation` | Optional React content rendered in the header, such as a link back to the hosting application. |
+| `showDelta` | Set to `false` to hide the difference view while retaining the level charts. Defaults to `true`, preserving the standalone behaviour. This is a presentation option, not an access-control mechanism. |
+
+The host owns loading and source switching. It can offer locally saved data by
+calling the existing `parseLocalFolder()` and supplying its aggregate result to
+the same prop. `controls` and `navigation` are trusted application components,
+not HTML or React objects received from an API. Source labels, configuration names
+and status messages are rendered as text. Configuration names never replace the `baseline`/`scenario` identifiers
+used by filtering and calculations.
+
+Treat row arrays as immutable: supply a new array when results change. Row
+normalisation is memoised by that array. Changing `key` also resets chart state.
+The interface does not alter the existing difference calculations; a host can
+hide that view until its results support the required comparison method.
+
+**Keep the `dataSource` object present while loading or when access is lost.**
+Supply `rows: []` and an appropriate `message`; the Visualiser then removes its
+charts and shows the connected-source status. It does not fetch bundled data,
+open a folder picker or make a network request on behalf of a connected source.
+Only omitting the prop (or explicitly setting it to `null`/`undefined`) returns
+to the standalone default/local workflow. Late responses from a previous
+standalone load cannot replace connected results.
+
+Rows use the normalised shape returned by `performCrossRunAggregation()`, not
+the alternate CSV header names accepted by `parseCsvRow()`:
+
+- Numeric `year` and text `scenario`, `module`, `variable`, `variable_value`,
+  `stratifier`, `stratifier_value`, `metric_type`.
+- `scenario` is `baseline` or `scenario`; `metric_type` is `mean` or `share`.
+- Numeric `n_runs`, `total_sample`, `min_sample`, `mean_sample`, `mean_value`,
+  `sd_value`, `lower_ci`, `upper_ci`. Missing numeric metrics or JSON `null`
+  become `NaN`, preserving unavailable/suppressed estimates rather than
+  converting them to zero. Native `NaN` is also accepted; infinity and numeric
+  strings are rejected.
+- Other row fields are rejected to catch accidental use of a different data
+  format. Rows are copied without mutating their source or recalculating values.
+
+**Browser validation is not a privacy boundary.** The hosting service must
+authenticate the user, check ownership and permissions, apply its approved
+aggregation/disclosure rules, and send only permitted aggregate data. It must
+never send restricted raw records, identifiers, file paths or diagnostic logs
+to this interface. Rejecting a row after it reached the browser cannot undo
+that disclosure. This PR supplies a reusable Visualiser interface; the
+authenticated results API and VM integration remain in the hosting repositories.
+
+#### Checking the connected-source interface
+
+```bash
+npm ci --legacy-peer-deps
+CI=true npm test -- --watchAll=false --runInBand --transformIgnorePatterns '^$' \
+  --runTestsByPath src/aggregateDataSource.test.js src/App.aggregateData.test.js src/App.aggregateCharts.test.js
+```
+
+These tests use fictional data and the real D3 charts. They cover chart-data
+handoff, configuration names, unavailable and
+suppressed values, source switching, late responses, absence of automatic
+connected-source requests, and preservation of the default/local workflows.
+
 
 ## How the aggregation pipeline works
 
@@ -193,13 +292,13 @@ All chart colours are defined once, centrally, in `useAggregatedData.js` (`build
 ## Browser support
 
 - The default pre-loaded dataset works in any modern browser.
-- "Visualise Your Own Data" requires the File System Access API (`window.showDirectoryPicker`), currently supported in Chromium-based browsers (Chrome, Edge, Opera, Arc, etc.). In browsers without it (e.g. Firefox, Safari), the folder picker itself won't open — the default dataset view still works normally.
+- "Visualise Locally Saved Data" requires the File System Access API (`window.showDirectoryPicker`), currently supported in Chromium-based browsers (Chrome, Edge, Opera, Arc, etc.). In browsers without it (e.g. Firefox, Safari), the folder picker itself won't open — the default dataset view still works normally.
 - Within that Chromium path, if Web Workers are unavailable for any reason, the app automatically falls back to slower, single-threaded, main-thread processing — the UI and results are otherwise identical.
 - A screen narrower than 320px shows a "screen too small" message instead of the dashboard; everything from a typical phone width upward gets a responsive layout.
 
 ## Privacy & data handling
 
-This tool is entirely JavaScript-based. All aggregation of your own simulation output happens locally in your browser — nothing you select via "Visualise Your Own Data" is uploaded, stored, or transmitted anywhere.
+All aggregation of locally selected simulation output happens in your browser — nothing you select via "Visualise Locally Saved Data" is uploaded, stored, or transmitted by the local-folder parser. When an embedding application supplies connected results, its service is responsible for access control and for delivering only approved aggregate data, as described above.
 
 ## Customising the dashboard
 
