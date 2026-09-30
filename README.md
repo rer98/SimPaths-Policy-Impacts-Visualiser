@@ -21,6 +21,7 @@ The dashboard compares a Baseline run against a Policy Scenario across demograph
 - [Colour system](#colour-system)
 - [Browser support](#browser-support)
 - [Privacy & data handling](#privacy--data-handling)
+- [Development checks](#development-checks)
 - [Customising the dashboard](#customising-the-dashboard)
 - [Known limitations](#known-limitations)
 - [Credit & citation](#credit--citation)
@@ -42,7 +43,7 @@ The dashboard compares a Baseline run against a Policy Scenario across demograph
 ## Tech stack
 
 - React (function components + hooks) for the UI
-- D3.js for both data-side aggregation (`d3.csvParse`, `d3.csv`) and chart rendering (raw SVG, no chart library)
+- D3.js for CSV row parsing (`d3.csvParseRows`), CSV fetching (`d3.text`) and chart rendering (raw SVG, no chart library)
 - Web Workers (native, no bundler-specific worker loader) for parallel CSV parsing/aggregation
 - File System Access API (`window.showDirectoryPicker`) for reading local simulation output folders directly, with no file-by-file upload step
 
@@ -58,6 +59,9 @@ src/
 ├── useAggregatedData.js    # Variable/stratifier definitions, colour engine, CSV row parser, data hook
 ├── parseCore.js            # Pure parsing + per-run aggregation logic (no browser APIs)
 ├── localFolderParser.js    # Directory discovery + worker-pool dispatch for local folders
+├── processWorkerBatches.js # Reusable worker dispatch, completion and cleanup
+├── csvParse.js            # CSV objects and row accessors without dynamic code generation
+├── tooltipContent.js      # Tooltip headings and values rendered as literal text
 └── parseWorker.js          # Web Worker: reads + aggregates one batch of runs at a time
 
 public/
@@ -200,6 +204,28 @@ All chart colours are defined once, centrally, in `useAggregatedData.js` (`build
 ## Privacy & data handling
 
 This tool is entirely JavaScript-based. All aggregation of your own simulation output happens locally in your browser — nothing you select via "Visualise Your Own Data" is uploaded, stored, or transmitted anywhere.
+
+## Development checks
+
+The focused regression tests cover worker reuse and cleanup, CSV quoting and row
+conversion, and tooltip labels that contain HTML. Install the locked dependencies
+and run them with:
+
+```bash
+npm ci --legacy-peer-deps
+CI=true npm test -- --watchAll=false --runInBand --transformIgnorePatterns '^$' --runTestsByPath src/csvParse.test.js src/processWorkerBatches.test.js src/tooltipContent.test.js
+```
+
+The existing lock file needs legacy peer-dependency handling because it omits an
+optional YAML peer used by the build tooling. Jest needs to transform D3's ES
+modules for these tests; the command enables that transformation.
+
+CSV object conversion uses D3's row parser and converts each row inside its
+callback, so discarded raw rows are not collected into another full-file array.
+This avoids the dynamic code generation used by D3's object parser and does not
+require `unsafe-eval` for CSV imports. Tooltip text is inserted using DOM text
+nodes, with a bold heading and line breaks; labels cannot create HTML elements.
+The aggregation and suppression methods are unchanged.
 
 ## Customising the dashboard
 

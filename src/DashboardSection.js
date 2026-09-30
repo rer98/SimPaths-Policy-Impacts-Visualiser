@@ -25,6 +25,7 @@
  */
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import * as d3 from "d3";
+import { setTooltipContent } from "./tooltipContent.js";
 import {
   useAggregatedData, uniqueValues, stratLabel, averageAcrossYears,
   buildColourMap, orderVariableValues, orderStratifierValues, GREY,
@@ -95,12 +96,12 @@ function fmtDelta(v,isCat){
 function fmtSample(row){
   if (!row||row.mean_sample==null||isNaN(row.mean_sample)) return "";
   const n=row.n_runs;
-  return `<br/>Sample: ${Math.round(row.mean_sample).toLocaleString()}${n!=null?` (avg across ${n} run${n===1?"":"s"})`:""}`;
+  return `Sample: ${Math.round(row.mean_sample).toLocaleString()}${n!=null?` (avg across ${n} run${n===1?"":"s"})`:""}`;
 }
 /** Delta-specific variant of fmtSample() — a Δ figure is a difference of two independent samples, so shows both sides' average per-run sample size rather than a single number. */
 function fmtDeltaSample(row){
   if (!row||row.base_mean_sample==null||row.scen_mean_sample==null) return "";
-  return `<br/>Sample: Baseline ${Math.round(row.base_mean_sample).toLocaleString()} · Scenario ${Math.round(row.scen_mean_sample).toLocaleString()}`;
+  return `Sample: Baseline ${Math.round(row.base_mean_sample).toLocaleString()} · Scenario ${Math.round(row.scen_mean_sample).toLocaleString()}`;
 }
 /**
  * Formats a numeric variable's missingness for a data point's tooltip, e.g.
@@ -117,7 +118,7 @@ function fmtMissing(mrow){
   if (pct==="0.0") return "";
   const avgN=mrow.mean_sample!=null&&!isNaN(mrow.mean_sample)?Math.round(mrow.mean_sample):null;
   const n=mrow.n_runs;
-  return `<br/>Missing: ${pct}%`+(avgN!=null?` (avg ${avgN.toLocaleString()} missing${n!=null?` per run, across ${n} run${n===1?"":"s"}`:""})`:"");
+  return `Missing: ${pct}%`+(avgN!=null?` (avg ${avgN.toLocaleString()} missing${n!=null?` per run, across ${n} run${n===1?"":"s"}`:""})`:"");
 }
 /** d3.extent() over a list of years, but guards the two degenerate cases: no years at all (→ [0,1]) and a single distinct year (→ that year ±1, so the axis isn't zero-width). */
 function safeYearDomain(yrs){
@@ -429,8 +430,8 @@ function getTooltip(){
   if (!el){ el=document.createElement("div"); el.id="smpaths-tt"; Object.assign(el.style,{position:"fixed",pointerEvents:"none",zIndex:9999,background:"rgba(15,23,42,0.93)",color:"#f8fafc",padding:"9px 13px",borderRadius:"8px",fontSize:"13px",lineHeight:"1.65",maxWidth:"240px",boxShadow:"0 4px 20px rgba(0,0,0,0.3)",opacity:0,transition:"opacity 0.1s ease",fontFamily:"system-ui,sans-serif"}); document.body.appendChild(el); }
   return el;
 }
-/** Sets the tooltip's HTML content and fades it in, positioned at the given mouse event's location. */
-function showTT(html,e){const t=getTooltip();t.innerHTML=html;t.style.opacity=1;moveTT(e);}
+/** Sets the tooltip's text content and fades it in, positioned at the given mouse event's location. */
+function showTT(content,e){const t=getTooltip();setTooltipContent(t,content);t.style.opacity=1;moveTT(e);}
 /** Repositions the tooltip to follow the mouse, flipping to the left of the cursor if it would otherwise overflow the right edge of the viewport. */
 function moveTT(e){const t=getTooltip();const w=t.offsetWidth||220;t.style.left=(e.clientX+14+w>window.innerWidth?e.clientX-w-14:e.clientX+14)+"px";t.style.top=(e.clientY-20)+"px";}
 /** Fades the tooltip out (on mouseout). */
@@ -804,7 +805,12 @@ function LineChart({svgRef,baseData,scenData,colourMap,highlighted,
       sorted.filter(d=>!isNaN(d.mean_value)).forEach(d=>{
         const cx=xScale(d.year), cy=yScale(d.mean_value);
         const mrow=missingLookup?missingLookup.get(`${scenarioKey}|${d.year}|${stratValKey}`):null;
-        const ttHtml=`<strong>${label}</strong><br/>${scenLabel}: ${fmt(d.mean_value,isCategorical)}`+(!isNaN(d.lower_ci)?`<br/>95% CI: [${fmt(d.lower_ci,isCategorical)}, ${fmt(d.upper_ci,isCategorical)}]`:"")+fmtSample(d)+fmtMissing(mrow)+`<br/>Year: ${d.year}${onYearClick?" · click to filter a cross-section":""}`;
+        const ttContent={ title:label, lines:[
+          `${scenLabel}: ${fmt(d.mean_value,isCategorical)}`,
+          !isNaN(d.lower_ci)?`95% CI: [${fmt(d.lower_ci,isCategorical)}, ${fmt(d.upper_ci,isCategorical)}]`:"",
+          fmtSample(d), fmtMissing(mrow),
+          `Year: ${d.year}${onYearClick?" · click to filter a cross-section":""}`,
+        ] };
         const dotR=small?(isLit?2.5:1.5):(isLit?3.5:2);
         if (symIdx!==undefined&&!small){
           const symPath=d3.symbol().type(SYMBOLS[symIdx]).size(isLit?52:28)();
@@ -821,7 +827,7 @@ function LineChart({svgRef,baseData,scenData,colourMap,highlighted,
         g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",Math.max(8,dotR+5))
           .attr("fill","transparent")
           .style("cursor",onYearClick?"pointer":"default")
-          .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT)
+          .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT)
           .on("click",()=>{if(onYearClick) onYearClick(d.year);});
       });
     };
@@ -931,11 +937,15 @@ function StackedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
           const colour=colourMap[seg.vv]||GREY, fc=isLit?colour:GREY;
           const barY=yScale(seg.y1), barH=Math.abs(yScale(seg.y0)-yScale(seg.y1));
           const bh=Math.max(0.5,barH);
-          const ttHtml=`<strong>${addSpaces(stratLabel(seg.vv,varLabel))}</strong><br/>${isBase?"Baseline":"Scenario"}: ${fmt(seg.val,true)}`+(seg.row&&!isNaN(seg.row.lower_ci)?`<br/>95% CI: [${fmt(seg.row.lower_ci,true)}, ${fmt(seg.row.upper_ci,true)}]`:"")+fmtSample(seg.row)+`<br/>Year: ${yr}`;
+          const ttContent={ title:addSpaces(stratLabel(seg.vv,varLabel)), lines:[
+            `${isBase?"Baseline":"Scenario"}: ${fmt(seg.val,true)}`,
+            seg.row&&!isNaN(seg.row.lower_ci)?`95% CI: [${fmt(seg.row.lower_ci,true)}, ${fmt(seg.row.upper_ci,true)}]`:"",
+            fmtSample(seg.row), `Year: ${yr}`,
+          ] };
           if (isBase){
             g.append("rect").attr("x",ox+bx).attr("y",barY).attr("width",bw).attr("height",bh)
               .attr("fill",fc).attr("opacity",isLit?0.88:0.18)
-              .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+              .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
           } else {
             // Scenario: lighter fill + inline diagonal hatch (no url() refs) + border
             g.append("rect").attr("x",ox+bx).attr("y",barY).attr("width",bw).attr("height",bh)
@@ -944,7 +954,7 @@ function StackedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
             drawHatchClipped(svg,g,ox+bx,barY,bw,bh,fc,isLit?0.55:0.1);
             g.append("rect").attr("x",ox+bx).attr("y",barY).attr("width",bw).attr("height",bh)
               .attr("fill","none").attr("stroke",fc).attr("stroke-width",1).attr("opacity",isLit?0.65:0.12)
-              .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+              .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
           }
         });
       });
@@ -963,11 +973,15 @@ function StackedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
           const isLit=allLit||highlighted.has(seg.vv);
           const colour=colourMap[seg.vv]||GREY, fc=isLit?colour:GREY;
           const barY=yScale(seg.y1), barH=Math.abs(yScale(seg.y0)-yScale(seg.y1));
-          const ttHtml=`<strong>${addSpaces(stratLabel(seg.vv,varLabel))}</strong><br/>Scenario: ${fmt(seg.val,true)}`+(seg.row&&!isNaN(seg.row.lower_ci)?`<br/>95% CI: [${fmt(seg.row.lower_ci,true)}, ${fmt(seg.row.upper_ci,true)}]`:"")+fmtSample(seg.row)+`<br/>Year: ${yr}`;
+          const ttContent={ title:addSpaces(stratLabel(seg.vv,varLabel)), lines:[
+            `Scenario: ${fmt(seg.val,true)}`,
+            seg.row&&!isNaN(seg.row.lower_ci)?`95% CI: [${fmt(seg.row.lower_ci,true)}, ${fmt(seg.row.upper_ci,true)}]`:"",
+            fmtSample(seg.row), `Year: ${yr}`,
+          ] };
           // Transparent overlay rect — painted last, always on top
           g.append("rect").attr("x",ox+bx).attr("y",barY).attr("width",bw).attr("height",Math.max(0.5,barH))
             .attr("fill","transparent")
-            .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+            .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
         });
       });
     }
@@ -985,7 +999,7 @@ function StackedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
  * averageAcrossYears). One group of bars per variable value, with a
  * Baseline bar and a Scenario bar side-by-side in each group, plus
  * error-bar whiskers showing the 95% CI — this is also where the 95% CI
- * first appears in a bar-chart tooltip (see the ttHtml construction
+ * first appears in a bar-chart tooltip (see the ttContent construction
  * inside), which StackedBarChart's tooltips were later brought in line
  * with.
  *
@@ -1070,16 +1084,20 @@ function GroupedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
             const row=getRow(rows,sv,vv); if (!row) return;
             const bx=xInner(key), barY=yScale(row.mean_value), barH=Math.abs(y0-barY);
             const lbl=isBase?"Baseline":"Scenario";
-            const ttHtml=`<strong>${addSpaces(stratLabel(vv,varLabel))} — ${addSpaces(stratLabel(sv,viewBy))}</strong><br/>${lbl}: ${fmt(row.mean_value,isCategorical)}`+(!isNaN(row.lower_ci)?`<br/>95% CI: [${fmt(row.lower_ci,isCategorical)}, ${fmt(row.upper_ci,isCategorical)}]`:"")+fmtSample(row)+(year?`<br/>Year: ${year}`:"");
+            const ttContent={ title:`${addSpaces(stratLabel(vv,varLabel))} — ${addSpaces(stratLabel(sv,viewBy))}`, lines:[
+              `${lbl}: ${fmt(row.mean_value,isCategorical)}`,
+              !isNaN(row.lower_ci)?`95% CI: [${fmt(row.lower_ci,isCategorical)}, ${fmt(row.upper_ci,isCategorical)}]`:"",
+              fmtSample(row), year?`Year: ${year}`:"",
+            ] };
             const gx=ox+mx+bx;
             if (isBase){
-              g.append("rect").attr("x",gx).attr("y",Math.min(y0,barY)).attr("width",bw).attr("height",Math.max(1,barH)).attr("fill",fc).attr("opacity",isLit?0.85:0.18).attr("rx",2).on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+              g.append("rect").attr("x",gx).attr("y",Math.min(y0,barY)).attr("width",bw).attr("height",Math.max(1,barH)).attr("fill",fc).attr("opacity",isLit?0.85:0.18).attr("rx",2).on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
             } else {
               const _gy=Math.min(y0,barY), _gh=Math.max(1,barH);
               g.append("rect").attr("x",gx).attr("y",_gy).attr("width",bw).attr("height",_gh).attr("fill",fc).attr("opacity",isLit?0.32:0.07).attr("rx",2);
               drawHatchClipped(svg,g,gx,_gy,bw,_gh,fc,isLit?0.55:0.1);
               g.append("rect").attr("x",gx).attr("y",_gy).attr("width",bw).attr("height",_gh).attr("fill","none").attr("stroke",fc).attr("stroke-width",1.5).attr("opacity",isLit?0.9:0.2).attr("rx",2)
-                .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+                .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
             }
             if (!isNaN(row.lower_ci)&&!isNaN(row.upper_ci)&&isLit){
               const ciColour=d3.color(fc).darker(1.3).toString();
@@ -1103,10 +1121,14 @@ function GroupedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
             if (!sRow||isNaN(sRow.mean_value)) return;
             const barY=yScale(sRow.mean_value), y0loc=yScale(Math.max(0,yDomain[0]>0?yDomain[0]:0));
             const barH=Math.abs(y0loc-barY);
-            const ttHtml=`<strong>${addSpaces(stratLabel(vv,varLabel))} — ${addSpaces(stratLabel(sv,viewBy))}</strong><br/>Scenario: ${fmt(sRow.mean_value,isCategorical)}`+(!isNaN(sRow.lower_ci)?`<br/>95% CI: [${fmt(sRow.lower_ci,isCategorical)}, ${fmt(sRow.upper_ci,isCategorical)}]`:"")+fmtSample(sRow)+(year?`<br/>Year: ${year}`:"");
+            const ttContent={ title:`${addSpaces(stratLabel(vv,varLabel))} — ${addSpaces(stratLabel(sv,viewBy))}`, lines:[
+              `Scenario: ${fmt(sRow.mean_value,isCategorical)}`,
+              !isNaN(sRow.lower_ci)?`95% CI: [${fmt(sRow.lower_ci,isCategorical)}, ${fmt(sRow.upper_ci,isCategorical)}]`:"",
+              fmtSample(sRow), year?`Year: ${year}`:"",
+            ] };
             g.append("rect").attr("x",ox+mx+bx).attr("y",Math.min(y0loc,barY)).attr("width",bw).attr("height",Math.max(1,barH))
               .attr("fill","transparent")
-              .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+              .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
           });
         });
       }
@@ -1142,15 +1164,19 @@ function GroupedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
         const row=getRow(rows,vv); if (!row) return;
         const bx=xInner(key), barY=yScale(row.mean_value), barH=Math.abs(y0-barY);
         const lbl=isBase?"Baseline":"Scenario";
-        const ttHtml=`<strong>${addSpaces(stratLabel(vv,varLabel))}</strong><br/>${lbl}: ${fmt(row.mean_value,isCategorical)}`+(!isNaN(row.lower_ci)?`<br/>95% CI: [${fmt(row.lower_ci,isCategorical)}, ${fmt(row.upper_ci,isCategorical)}]`:"")+fmtSample(row)+fmtMissing(isBase?missingBase:missingScen)+(year?`<br/>Year: ${year}`:"");
+        const ttContent={ title:addSpaces(stratLabel(vv,varLabel)), lines:[
+          `${lbl}: ${fmt(row.mean_value,isCategorical)}`,
+          !isNaN(row.lower_ci)?`95% CI: [${fmt(row.lower_ci,isCategorical)}, ${fmt(row.upper_ci,isCategorical)}]`:"",
+          fmtSample(row), fmtMissing(isBase?missingBase:missingScen), year?`Year: ${year}`:"",
+        ] };
         if (isBase){
-          g.append("rect").attr("x",ox+bx).attr("y",Math.min(y0,barY)).attr("width",bw).attr("height",Math.max(1,barH)).attr("fill",fc).attr("opacity",isLit?0.85:0.18).attr("rx",2).on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+          g.append("rect").attr("x",ox+bx).attr("y",Math.min(y0,barY)).attr("width",bw).attr("height",Math.max(1,barH)).attr("fill",fc).attr("opacity",isLit?0.85:0.18).attr("rx",2).on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
         } else {
           const _gx=ox+bx, _gy=Math.min(y0,barY), _gh=Math.max(1,barH);
           g.append("rect").attr("x",_gx).attr("y",_gy).attr("width",bw).attr("height",_gh).attr("fill",fc).attr("opacity",isLit?0.32:0.07).attr("rx",2);
           drawHatchClipped(svg,g,_gx,_gy,bw,_gh,fc,isLit?0.55:0.1);
           g.append("rect").attr("x",_gx).attr("y",_gy).attr("width",bw).attr("height",_gh).attr("fill","none").attr("stroke",fc).attr("stroke-width",1.5).attr("opacity",isLit?0.9:0.2).attr("rx",2)
-            .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+            .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
         }
         if (!isNaN(row.lower_ci)&&!isNaN(row.upper_ci)&&isLit){
           // Darker than the bar's own fill so the whiskers read clearly
@@ -1176,10 +1202,14 @@ function GroupedBarChart({svgRef,baseData,scenData,colourMap,highlighted,
         if (!sRow||isNaN(sRow.mean_value)) return;
         const barY=yScale(sRow.mean_value), y0loc=yScale(Math.max(0,yDomain[0]>0?yDomain[0]:0));
         const barH=Math.abs(y0loc-barY);
-        const ttHtml=`<strong>${addSpaces(stratLabel(vv,varLabel))}</strong><br/>Scenario: ${fmt(sRow.mean_value,isCategorical)}`+(!isNaN(sRow.lower_ci)?`<br/>95% CI: [${fmt(sRow.lower_ci,isCategorical)}, ${fmt(sRow.upper_ci,isCategorical)}]`:"")+fmtSample(sRow)+fmtMissing(missingScen)+( year?`<br/>Year: ${year}`:"");
+        const ttContent={ title:addSpaces(stratLabel(vv,varLabel)), lines:[
+          `Scenario: ${fmt(sRow.mean_value,isCategorical)}`,
+          !isNaN(sRow.lower_ci)?`95% CI: [${fmt(sRow.lower_ci,isCategorical)}, ${fmt(sRow.upper_ci,isCategorical)}]`:"",
+          fmtSample(sRow), fmtMissing(missingScen), year?`Year: ${year}`:"",
+        ] };
         g.append("rect").attr("x",ox+bx).attr("y",Math.min(y0loc,barY)).attr("width",bw).attr("height",Math.max(1,barH))
           .attr("fill","transparent")
-          .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+          .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
       });
     }
     if (!small) drawBSKey(g,iW,iH,showBaseline,showScenario);
@@ -1293,14 +1323,18 @@ function DeltaChart({svgRef,deltaData,colourMap,highlighted,isCategorical,
       g.append("path").datum(sorted).attr("d",lineFn).attr("fill","none").attr("stroke",fc).attr("stroke-width",sw).attr("opacity",opacity).style("pointer-events","none");
       sorted.filter(d=>!isNaN(d.mean_value)).forEach(d=>{
         const cx=xScale(d.year), cy=yScale(d.mean_value);
-        const ttHtml=`<strong>${label}</strong><br/>Δ: ${fmtDelta(d.mean_value,isCategorical)}`+(!isNaN(d.lower_ci)?`<br/>95% CI: [${fmtDelta(d.lower_ci,isCategorical)}, ${fmtDelta(d.upper_ci,isCategorical)}]`:"")+fmtDeltaSample(d)+`<br/>Year: ${d.year}`;
+        const ttContent={ title:label, lines:[
+          `Δ: ${fmtDelta(d.mean_value,isCategorical)}`,
+          !isNaN(d.lower_ci)?`95% CI: [${fmtDelta(d.lower_ci,isCategorical)}, ${fmtDelta(d.upper_ci,isCategorical)}]`:"",
+          fmtDeltaSample(d), `Year: ${d.year}`,
+        ] };
         if (symIdx!==undefined){
           const sp=d3.symbol().type(SYMBOLS[symIdx]).size(isLit?48:24)();
           g.append("path").attr("d",sp).attr("transform",`translate(${cx},${cy})`).attr("fill",fc).attr("opacity",opacity)
-            .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+            .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
         } else {
           g.append("circle").attr("cx",cx).attr("cy",cy).attr("r",isLit?3.5:2).attr("fill",fc).attr("opacity",opacity)
-            .on("mouseover",e=>showTT(ttHtml,e)).on("mousemove",moveTT).on("mouseout",hideTT);
+            .on("mouseover",e=>showTT(ttContent,e)).on("mousemove",moveTT).on("mouseout",hideTT);
         }
       });
     });

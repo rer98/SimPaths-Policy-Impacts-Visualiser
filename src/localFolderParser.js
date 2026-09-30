@@ -18,6 +18,7 @@
  */
 
 import { performCrossRunAggregation, processRunTexts } from "./parseCore.js";
+import { processWorkerBatches } from "./processWorkerBatches.js";
 
 const WORKER_COUNT = Math.min(navigator.hardwareConcurrency || 4, 8);
 // How many runs to batch per worker message (tune if runs are very small/large)
@@ -136,18 +137,6 @@ async function locateRunFiles({ runEntry }) {
  * @returns {Promise<object[]>} combined per-run metrics from every worker
  */
 async function dispatchToWorkers(runHandles, onProgress, total) {
-  let useWorkers = true;
-  try {
-    const testWorker = new Worker(new URL("./parseWorker.js", import.meta.url), { type:"module" });
-    testWorker.terminate();
-  } catch {
-    useWorkers = false;
-  }
-
-  if (!useWorkers) {
-    return mainThreadFallback(runHandles, onProgress, total);
-  }
-
   // Split into batches
   const batches = [];
   for (let i=0; i<runHandles.length; i+=BATCH_SIZE) {
@@ -159,42 +148,19 @@ async function dispatchToWorkers(runHandles, onProgress, total) {
     })));
   }
 
-  const allMetrics = [];
-  let runsProcessed = 0;
-
-  // Pool: keep WORKER_COUNT workers busy
-  const pool = Array.from({ length: Math.min(WORKER_COUNT, batches.length) }, () =>
-    new Worker(new URL("./parseWorker.js", import.meta.url), { type:"module" })
-  );
-
-  await new Promise((resolve, reject) => {
-    let batchIndex = 0;
-    let active = 0;
-
-    function assignNext(worker) {
-      if (batchIndex >= batches.length) {
-        active--;
-        if (active===0) resolve();
-        return;
-      }
-      const batch = batches[batchIndex++];
-      active++;
-      worker.onmessage = ({ data }) => {
-        if (data.error) { reject(new Error(data.error)); return; }
-        allMetrics.push(...data.metrics);
-        runsProcessed = Math.min(runsProcessed + batch.length, total);
-        onProgress(`Aggregating… ${runsProcessed}/${total} runs`);
-        assignNext(worker);
-      };
-      worker.onerror = (e) => reject(new Error(e.message || "A worker failed while processing a run."));
-      worker.postMessage({ runs: batch });
+  // Construction can fail after some workers have already been created. Release
+  // that partial pool before falling back; no work has been posted at this point.
+  const pool = [];
+  try {
+    for (let i=0; i<Math.min(WORKER_COUNT, batches.length); i++) {
+      pool.push(new Worker(new URL("./parseWorker.js", import.meta.url), { type:"module" }));
     }
+  } catch {
+    pool.forEach(worker => worker.terminate());
+    return mainThreadFallback(runHandles, onProgress, total);
+  }
 
-    pool.forEach(w => assignNext(w));
-  });
-
-  pool.forEach(w => w.terminate());
-  return allMetrics;
+  return processWorkerBatches(pool, batches, onProgress, total);
 }
 
 // ─── Main-thread fallback ──────────────────────────────────────────────────────

@@ -28,7 +28,7 @@
  * processRunTexts() below for the specifics.
  */
 
-import * as d3 from "d3";
+import { csvParse } from "./csvParse.js";
 
 // ─── Binning helpers ──────────────────────────────────────────────────────────
 /** Buckets a raw numeric age into the dashboard's fixed age-band labels. Returns null for non-numeric input. */
@@ -213,7 +213,7 @@ const PERSON_ONLY_KEYS = new Set(["yBenUCReceivedFlag"]);
 export function processRunTexts(personText, benefitText, scenarioName, runId) {
   // ── Benefit CSV → slim lookup map, keyed by "<year>_<benefitUnitId>" ────────
   const benefitMap = new Map();
-  d3.csvParse(benefitText, raw => {
+  csvParse(benefitText, raw => {
     const yr   = raw.time || raw.Time || raw.Year;
     const buId = raw.id_BenefitUnit || raw.idbu || raw.idBu;
     if (yr && buId) benefitMap.set(`${yr}_${buId}`, pickRow(raw));
@@ -233,7 +233,7 @@ export function processRunTexts(personText, benefitText, scenarioName, runId) {
   const colIndex = Object.entries(COLUMN_MAP);
   const runRows = [];
 
-  d3.csvParse(personText, (p) => {
+  csvParse(personText, (p) => {
     const yr   = p.time || p.Time || p.Year;
     const buId = p.idBu || p.idbu || p.id_BenefitUnit;
     const bRow = benefitMap.get(`${yr}_${buId}`) || EMPTY_ROW;

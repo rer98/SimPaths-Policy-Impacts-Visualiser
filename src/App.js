@@ -17,6 +17,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
+import { csvParse } from "./csvParse.js";
 import DashboardSection from "./DashboardSection";
 import { parseCsvRow } from "./useAggregatedData";
 import { parseLocalFolder } from "./localFolderParser";
@@ -126,7 +127,8 @@ function App() {
     const url = `${process.env.PUBLIC_URL}/SimPaths_All_Aggregated_Outputs.csv`;
     setDefaultLoadFailed(false);
     setStatusMessage("Fetching default package snapshot matrix...");
-    d3.csv(url, parseCsvRow)
+    d3.text(url)
+      .then(text => csvParse(text, parseCsvRow))
       .then(rows => {
         if (!rows.length) {
           // A 0-row result usually means the URL resolved to something that
