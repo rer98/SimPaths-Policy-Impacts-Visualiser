@@ -1,6 +1,4 @@
-/* (C) Copyright 2026, by Ross Richardson
- * Verify CSV compatibility, row-accessor behaviour and parsing without unsafe-eval.
- * @author ross richardson
+/* Verify CSV compatibility, row-accessor behaviour and parsing without unsafe-eval.
  */
 import { csvParse as originalCsvParse } from "d3";
 import { csvParse } from "./csvParse.js";

@@ -1,6 +1,4 @@
-/* (C) Copyright 2026, by Ross Richardson
- * Render tooltip labels and values as text, preserving a bold heading and line breaks.
- * @author ross richardson
+/* Render tooltip labels and values as text, preserving a bold heading and line breaks.
  */
 
 export function setTooltipContent(element, { title, lines }) {

@@ -1,6 +1,4 @@
-/* (C) Copyright 2026, by Ross Richardson
- * Regression tests for reusable local-data workers, completion and failure cleanup.
- * @author ross richardson
+/* Regression tests for reusable local-data workers, completion and failure cleanup.
  */
 import { processWorkerBatches } from "./processWorkerBatches.js";
 

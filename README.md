@@ -227,6 +227,12 @@ require `unsafe-eval` for CSV imports. Tooltip text is inserted using DOM text
 nodes, with a bold heading and line breaks; labels cannot create HTML elements.
 The aggregation and suppression methods are unchanged.
 
+`processWorkerBatches.js` is extracted and adapted from the original
+`dispatchToWorkers()` in `localFolderParser.js`, retaining its dispatch structure
+and progress reporting while correcting worker counting, failure handling and
+cleanup. The CSV wrapper calls D3's existing row parser rather than implementing
+CSV tokenisation itself.
+
 ## Customising the dashboard
 
 - **Variables & domains**: edit `DOMAIN_SECTIONS`, `DOMAIN_BLURBS` and `VARIABLE_DESCRIPTIONS` in `App.js` to change which variables appear, how they're grouped, and their descriptions.

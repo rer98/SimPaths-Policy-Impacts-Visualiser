@@ -1,7 +1,5 @@
-/* (C) Copyright 2026, by Ross Richardson
- * Parse CSV objects without dynamic code generation, converting one row at a time.
+/* Parse CSV objects without dynamic code generation, converting one row at a time.
  * D3 handles CSV quoting; the header and row-accessor behaviour match csvParse.
- * @author ross richardson
  */
 import { csvParseRows } from "d3";
 

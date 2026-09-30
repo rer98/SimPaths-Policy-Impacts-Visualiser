@@ -1,6 +1,4 @@
-/* (C) Copyright 2026, by Ross Richardson
- * Verify that chart tooltip labels stay literal text and cannot create active HTML.
- * @author ross richardson
+/* Verify that chart tooltip labels stay literal text and cannot create active HTML.
  */
 import { setTooltipContent } from "./tooltipContent.js";
 

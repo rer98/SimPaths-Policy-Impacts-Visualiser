@@ -1,9 +1,7 @@
-/* (C) Copyright 2026, by Ross Richardson
- * Dispatch local simulation batches to reusable workers and release the pool on exit.
- * @author ross richardson
- */
-
-/**
+/* Dispatch local simulation batches to reusable workers and release the pool on exit.
+ * Extracted and adapted from dispatchToWorkers() in the upstream Visualiser's
+ * src/localFolderParser.js, revision 9a904b52c8a7d2306d3a9e5d175cf2614de0c0ee.
+ *
  * The caller supplies an already-created pool and one array per batch. Count
  * workers still processing work, rather than incrementing for every new batch.
  * Workers are terminated after success, worker errors or callback exceptions.
