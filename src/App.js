@@ -105,6 +105,13 @@ function App({ dataSource } = {}) {
   const hasDataSource = dataSource != null;
   const sourceIsObject = typeof dataSource === "object" && !Array.isArray(dataSource);
   const suppliedRows = dataSource?.rows;
+  // Optional intent hints are best-effort; they never change the active chart.
+  function hintVariable(variable) {
+    try { dataSource?.viewSource?.hint?.({variable}); } catch {}
+  }
+  function cancelHint() {
+    try { dataSource?.viewSource?.cancelHint?.(); } catch {}
+  }
   const connectedData = useMemo(() => {
     if (!hasDataSource) return { rows: [], error: "" };
     try {
@@ -605,7 +612,10 @@ function App({ dataSource } = {}) {
                     {isOpen && (
                       <div style={{ paddingLeft: 4, marginBottom: 6 }}>
                         {vars.map(v => (
-                          <button key={v} onClick={() => setActiveVariable(v)} style={{ display: "block", width: "100%", textAlign: "left", background: activeVariable === v ? `${CORAL}18` : "transparent", border: "none", fontSize: 13, padding: "6px 10px", borderRadius: 6, cursor: "pointer", marginBottom: 2, color: activeVariable === v ? CORAL : TEXT_MID, fontWeight: activeVariable === v ? 600 : 400, outline: "none" }}>
+                          <button key={v} onClick={() => setActiveVariable(v)}
+                            onMouseEnter={() => hintVariable(v)} onFocus={() => hintVariable(v)}
+                            onMouseLeave={cancelHint} onBlur={cancelHint}
+                            style={{ display: "block", width: "100%", textAlign: "left", background: activeVariable === v ? `${CORAL}18` : "transparent", border: "none", fontSize: 13, padding: "6px 10px", borderRadius: 6, cursor: "pointer", marginBottom: 2, color: activeVariable === v ? CORAL : TEXT_MID, fontWeight: activeVariable === v ? 600 : 400, outline: "none" }}>
                             {v}
                           </button>
                         ))}

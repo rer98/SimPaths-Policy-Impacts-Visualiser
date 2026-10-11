@@ -298,6 +298,9 @@ Large online comparisons can supply `viewSource` instead of a full `rows` array:
       // for this view, including baseline rows for paired comparisons.
       return await loadApprovedRows({ variable, stratifier, kind, scenarios }, signal);
     },
+    // Optional, best-effort hints; omitting these keeps ordinary click-to-load.
+    hint: ({ variable }) => hintApprovedView(variable),
+    cancelHint: () => cancelHintedView(),
   },
 }} />
 ```
@@ -315,8 +318,17 @@ hide stale charts and exports; an explicit retry uses the same selection.
 There is no two-alternative limit; twelve alternatives are covered by chart
 tests. The host must bound response sizes, rows and any cache, recheck permissions
 even when reusing cached rows, and provide a controlled error for oversized views.
-The SimPaths Online adapter uses 8 MiB/20,000-row view limits and a private,
-instance-scoped memory cache; those hosting choices are not calculation rules.
+Optional `hint({ variable })` and `cancelHint()` callbacks let the host prepare a
+likely next view when a variable receives pointer or keyboard focus. Hints do
+not select a variable or display their results. Leaving the control cancels the
+hint; callback failures do not prevent ordinary chart selection. The host must
+bound and cancel background work, prioritise selected views and honour the same
+permissions as foreground reads.
+
+The SimPaths Online adapter uses 8 MiB/20,000-row view limits, bounded memory and
+session-partitioned browser storage, and delayed, bounded hints. Stored rows are
+reused only after a fresh access check. These hosting choices are not calculation
+rules, and this repository's standalone/local-file loaders do not enable them.
 
 This interface does not aggregate raw files or change suppression, paired impacts,
 confidence intervals or exports. Standalone and locally saved data retain their

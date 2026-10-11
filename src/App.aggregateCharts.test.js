@@ -34,6 +34,24 @@ function linePaths(container) {
 const previousObserver = global.ResizeObserver;
 const previousBBox = SVGElement.prototype.getBBox;
 
+test("optional pointer and keyboard hints prepare a variable without changing the active chart", async () => {
+  const viewSource={scenarioNames:['scenario'],variables:[{name:'Highest Level of Education',years:[2020,2021]}],
+    load:jest.fn(async()=>fictionalRows()),hint:jest.fn(),cancelHint:jest.fn()};
+  render(<App dataSource={{...source([]),viewSource}}/>);
+  await waitFor(()=>expect(viewSource.load).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByRole('button',{name:/^Health/}));
+  const next=screen.getByRole('button',{name:'Mental Component Summary (MCS)',exact:true});
+  fireEvent.mouseEnter(next);expect(viewSource.hint).toHaveBeenLastCalledWith({variable:'Mental Component Summary (MCS)'});
+  fireEvent.mouseLeave(next);expect(viewSource.cancelHint).toHaveBeenCalledTimes(1);
+  fireEvent.focus(next);expect(viewSource.hint).toHaveBeenCalledTimes(2);
+  fireEvent.blur(next);expect(viewSource.cancelHint).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('heading',{name:'Highest Level of Education',exact:true})).toBeInTheDocument();
+  expect(viewSource.load).toHaveBeenCalledTimes(1);
+  viewSource.hint.mockImplementation(()=>{throw new Error('Prefetch unavailable');});
+  fireEvent.mouseEnter(next);
+  expect(screen.getByRole('heading',{name:'Highest Level of Education',exact:true})).toBeInTheDocument();
+});
+
 beforeAll(() => {
   global.ResizeObserver = class {
     constructor(notify) { this.notify = notify; }
