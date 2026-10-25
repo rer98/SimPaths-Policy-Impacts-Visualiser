@@ -286,6 +286,13 @@ stable IDs to display labels, which are rendered as text. Scenario toggles show
 or hide alternatives within the same charts. The host may set `showDelta: false`
 for legacy level-only aggregates.
 
+When the host updates an existing source, the current scenario choices are kept.
+New scenarios appear as unselected controls, while removed scenarios leave the
+selection. Opening a different source key starts with all its scenarios selected.
+The connected-source summary is highlighted in the Connect Data panel, and the
+Getting Started guidance distinguishes host-supplied results from browser-only
+local processing. Folder-layout help is shared by standalone and connected use.
+
 Only aggregated rows belong in this interface. Authentication, permission
 checks, processing limits, disclosure approval and retention remain the host's
 responsibility; raw person/benefit-unit records must not be supplied here.

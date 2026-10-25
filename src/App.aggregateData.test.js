@@ -30,6 +30,18 @@ const connected = (changes = {}) => ({
 let defaultReply;
 const savedFetch = global.fetch;
 
+test("connected guidance describes host processing and shows the shared folder help", () => {
+  render(<App dataSource={connected()} />);
+  expect(screen.getByText(/Connected results are supplied by the host service/)).toBeInTheDocument();
+  expect(screen.queryByText(/This tool is entirely JavaScript-based/)).toBeNull();
+  const source = screen.getByRole("region", { name: "Displayed data source" });
+  expect(source).toHaveTextContent("High Savings");
+  expect(source.style.background).not.toBe("");
+  fireEvent.focus(screen.getByRole("button", { name: "View folder structure" }));
+  expect(screen.getByRole("tooltip")).toHaveTextContent("Your Data Folder/");
+  expect(d3.text).not.toHaveBeenCalled();
+});
+
 beforeEach(() => {
   defaultReply = deferred();
   // Exercise both loader forms: upstream d3.csv and PR 1's d3.text + row parser.

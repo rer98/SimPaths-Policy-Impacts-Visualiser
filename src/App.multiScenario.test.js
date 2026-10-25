@@ -83,6 +83,36 @@ test("chart CSV buttons export all displayed alternatives and honour scenario to
   }finally{global.Blob=originalBlob;}
 });
 
+test("arriving configurations keep manual selections and source keys reset them", async () => {
+  const originalBlob = global.Blob;
+  let saved;
+  global.Blob = class { constructor(parts) { saved = parts.join(""); } };
+  URL.createObjectURL = jest.fn(() => "blob:fixture"); URL.revokeObjectURL = jest.fn();
+  jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  const names = { baseline: "Reference", scenario_1: "Policy A", scenario_2: "Policy B", scenario_3: "Policy C" };
+  const first = [row("baseline", 40), row("scenario_1", 45), row("scenario_2", 50)];
+  const source = rows => ({ rows, names, key: "same-experiment", label: "Online results" });
+  try {
+    const { rerender } = render(<App dataSource={source(first)} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Health.*▼/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Mental Component Summary (MCS)", exact: true }));
+    await screen.findAllByRole("button", { name: "↓ CSV" });
+    fireEvent.click(screen.getByRole("button", { name: /Policy B/ }));
+    const next = [...first, row("scenario_3", 55)];
+    rerender(<App dataSource={source(next)} />);
+    await screen.findByRole("button", { name: /Policy C/ });
+    fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
+    expect(new Set(csvParse(saved).map(value => value.scenario))).toEqual(new Set(["baseline", "scenario_1"]));
+    fireEvent.click(screen.getByRole("button", { name: /Policy C/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
+    expect(new Set(csvParse(saved).map(value => value.scenario))).toEqual(new Set(["baseline", "scenario_1", "scenario_3"]));
+    rerender(<App dataSource={{ ...source(next), key: "different-experiment" }} />);
+    await waitFor(() => expect(screen.queryByText(/Loading chart/)).toBeNull());
+    fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
+    expect(new Set(csvParse(saved).map(value => value.scenario))).toEqual(new Set(["baseline", "scenario_1", "scenario_2", "scenario_3"]));
+  } finally { global.Blob = originalBlob; }
+});
+
 test("publication SVG includes separate named alternatives and allocates space for long labels",()=>{
   const chart=document.createElementNS("http://www.w3.org/2000/svg","svg");
   chart.width={baseVal:{value:280}};chart.height={baseVal:{value:200}};

@@ -18,10 +18,12 @@ export default function AggregateDataPanel({ source, error, rowCount }) {
         : message
           ? <p role="status" style={{ fontSize: 12 }}>{message}</p>
           : rowCount === 0 && !source?.viewSource && <p role="status" style={{ fontSize: 12 }}>No aggregate results are available.</p>}
-      <section aria-label="Displayed data source" style={{ fontSize: 12, lineHeight: 1.5 }}>
+      <section aria-label="Displayed data source" style={{ marginTop: 14, padding: 12,
+        background: "#0f93a110", border: "1px solid #0f93a133", borderRadius: 6,
+        fontSize: 12, lineHeight: 1.5, overflowWrap: "anywhere" }}>
         <strong>Data source: {label}</strong>
-        <p>{comparisonLabel("baseline", source?.names)}</p>
-        {scenarios.map(role => <p key={role}>{comparisonLabel(role, source?.names)}</p>)}
+        <p style={{ margin: "8px 0 0" }}>{comparisonLabel("baseline", source?.names)}</p>
+        {scenarios.map(role => <p key={role} style={{ margin: "8px 0 0" }}>{comparisonLabel(role, source?.names)}</p>)}
       </section>
     </div>
   );

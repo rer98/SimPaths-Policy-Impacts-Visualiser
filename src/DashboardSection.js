@@ -2981,7 +2981,9 @@ export default function DashboardSection({parsedCache:fullRows,targetVariable,sh
     const scope=targetVariable+":"+varValuesKey;
     if(!view.loading&&!view.error&&lastValues.current!==scope){lastValues.current=scope;setEnabledVarVals(new Set(JSON.parse(varValuesKey)));}
   },[varValuesKey,targetVariable,view.loading,view.error]);
-  useEffect(()=>setEnabledScenarios(new Set(allScenarioNames)),[allScenarioNames]);
+  // Catalogue updates keep explicit user choices. Added scenarios stay available
+  // but unselected; a new data-source key still mounts with all scenarios shown.
+  useEffect(()=>setEnabledScenarios(previous=>new Set([...previous].filter(name=>allScenarioNames.includes(name)))),[allScenarioNames]);
 
   // scenarioMap filtered to current stratifier — used by LineChart in combined mode
   // Must be at top level (not inside JSX) to satisfy hooks rules

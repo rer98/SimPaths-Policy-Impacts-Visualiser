@@ -473,7 +473,9 @@ function App({ dataSource } = {}) {
       To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output.{" "}<FolderStructureHelp />{" "}Use "Visualise Locally Saved Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
     </p>
     <p style={{ margin: 0, lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
-      This tool is entirely JavaScript-based — all aggregation happens locally in your browser, and no data you upload is ever stored or sent anywhere.
+      {hasDataSource
+        ? "Connected results are supplied by the host service. Locally selected files are processed entirely in your browser and are not uploaded."
+        : "This tool is entirely JavaScript-based — all aggregation happens locally in your browser, and no data you upload is ever stored or sent anywhere."}
     </p>
   </div>
 
