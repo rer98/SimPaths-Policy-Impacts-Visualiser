@@ -186,6 +186,14 @@ All colours are defined in `useAggregatedData.js` (`buildColourMap()`).
 - **Categorical variables** — 10-colour, colourblind-friendly qualitative palette (`BRAND_QUAL`).
 - **Muted grey** (`GREY`) for dimmed/unhighlighted series.
 
+## Folder-layout help
+
+The **Getting Started** panel includes **View folder structure** immediately after
+the Baseline/Scenario layout explanation. Hover, focus or tap it to see the
+example. Escape, moving the pointer away or selecting another control closes it.
+The help stays below its link and within the viewport on narrow screens.
+Cancelling the local folder picker leaves the displayed data and controls intact.
+
 ## Browser support
 
 - Default dataset works in any modern browser.
