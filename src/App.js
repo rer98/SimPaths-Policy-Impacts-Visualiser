@@ -21,6 +21,7 @@ import { csvParse } from "./csvParse.js";
 import DashboardSection from "./DashboardSection";
 import { parseCsvRow } from "./useAggregatedData";
 import { parseLocalFolder } from "./localFolderParser";
+import FolderStructureHelp from "./FolderStructureHelp";
 import AggregateDataPanel from "./AggregateDataPanel";
 import { normaliseAggregateRows, comparisonLabel, sourceText, ComparisonNamesContext } from "./aggregateDataSource";
 
@@ -273,7 +274,6 @@ function App({ dataSource } = {}) {
   const linkBtnStyle = { color: AQUA, textDecoration: "none", fontSize: "14px", padding: "10px 14px", background: `${AQUA}10`, borderRadius: "6px", border: `1px solid ${AQUA}30`, transition: "all 0.2s", display: "inline-flex", alignItems: "center", fontWeight: 500 };
   // Compact pill variant used inline next to the "Explore changes across..." text
   const smallLinkStyle = { color: AQUA, textDecoration: "none", fontSize: "12px", padding: "5px 10px", background: `${AQUA}10`, borderRadius: "6px", border: `1px solid ${AQUA}30`, transition: "all 0.2s", display: "inline-flex", alignItems: "center", fontWeight: 500, whiteSpace: "nowrap" };
-  const [showFolderStructure, setShowFolderStructure] = useState(false);
   if (windowWidth < MIN_WIDTH) {
     return (
       <div style={{
@@ -470,7 +470,7 @@ function App({ dataSource } = {}) {
       </>}
     </p>
     <p style={{ margin: "0 0 10px", lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
-      To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output. Use "Visualise Locally Saved Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
+      To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output.{" "}<FolderStructureHelp />{" "}Use "Visualise Locally Saved Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
     </p>
     <p style={{ margin: 0, lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
       This tool is entirely JavaScript-based — all aggregation happens locally in your browser, and no data you upload is ever stored or sent anywhere.
@@ -504,68 +504,7 @@ function App({ dataSource } = {}) {
               {hasDataSource ? (
                 <AggregateDataPanel source={dataSource} error={connectedData.error} rowCount={displayedRows.length} />
               ) : <>
-              <p style = {{margin: "0 0 8px", fontSize: 12, color: TEXT_DARK}}> Select parent folder with runs organised into <strong>Baseline</strong> and <strong>Scenario</strong> subfolders <span
-              style={{
-                position: "relative",
-                display: "inline-block",
-              }}
-              onMouseEnter={() => setShowFolderStructure(true)}
-              onMouseLeave={() => setShowFolderStructure(false)}
-            >
-              <button
-                type="button"
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  color: "#2563eb",
-                  fontSize: "13.5px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                View folder structure.
-              </button>
-
-              {showFolderStructure && (
-                <span
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: "calc(100% + 8px)",
-                    background: "#fff",
-                    border: "1px solid #ddd",
-                    borderRadius: "8px",
-                    padding: "12px 16px",
-                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
-                    zIndex: 100,
-                    minWidth: "280px",
-                    textAlign: "left",
-                  }}
-                >
-                  <pre
-                    style={{
-                      margin: 0,
-                      fontSize: "12px",
-                      lineHeight: 1.5,
-                      fontFamily: "monospace",
-                      color: "#333",
-                    }}
-                  >
-          {`Your Data Folder/
-          ├── Baseline/
-          │   ├── Run 1/
-          │   ├── Run 2/
-          │   └── Run 3/
-          └── Scenario/
-              ├── Run 1/
-              ├── Run 2/
-              └── Run 3/`}
-                  </pre>
-                </span>
-              )}
-            </span></p>
+              <p style={{margin: "0 0 8px", fontSize: 12, color: TEXT_DARK}}>Select the parent folder containing your <strong>Baseline</strong> and <strong>Scenario</strong> folders.</p>
               <p style={{ margin: "0 0 16px", fontSize: 11, color: TEAL, lineHeight: 1.5, fontStyle: "italic" }}>
                 Nothing you select is uploaded or stored anywhere — all aggregation happens locally, in your browser.
               </p>
