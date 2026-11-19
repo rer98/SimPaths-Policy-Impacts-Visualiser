@@ -18,6 +18,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as d3 from "d3";
 import DashboardSection from "./DashboardSection";
+import ScenarioGraphic from "./ScenarioGraphic";
 import { parseCsvRow } from "./useAggregatedData";
 import { parseLocalFolder } from "./localFolderParser";
 
@@ -298,19 +299,6 @@ function App() {
           boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
         }}
       >
-        {/* PMH logo */}
-        <img
-          src={`${process.env.PUBLIC_URL}/pmh_logo.png`}
-          alt="PMH logo"
-          style={{
-            width: isMobile ? "115" : "150px",
-            maxWidth: "150px",
-            height: "auto",
-            display: "block",
-            objectFit: "contain",
-          }}
-        />
-
         {/* Partner logo */}
         <img
           src={`${process.env.PUBLIC_URL}/SimPaths-logo-transparent.png`}
@@ -377,13 +365,13 @@ function App() {
         Visualise the projected impact of a policy scenario on a simulated UK population, broken down by variable, year, and population subgroup. 
               </p>
       <p style={{ margin: "0 0 14px", lineHeight: 1.8, color: TEXT_DARK, fontSize: "clamp(14px, 2vw, 16px)" }}>
-        This tool visualises outputs from <a href="https://simpaths.org/" target="_blank" rel="noopener noreferrer" style={{ color: AQUA, textDecoration: "none", borderBottom: `2px solid ${AQUA}`, paddingBottom: "2px", transition: "opacity 0.2s" }}>SimPaths</a>, an open-source, dynamic microsimulation model developed by the Centre for Microsimulation and Policy Analysis (<a href="https://www.microsimulation.ac.uk/" target="_blank" rel="noopener noreferrer" style={{ color: AQUA, textDecoration: "none", borderBottom: `2px solid ${AQUA}`, paddingBottom: "2px", transition: "opacity 0.2s" }}>CeMPA</a>) at the University of Essex. The Policy Impacts Visualiser was built by researchers at the University of Glasgow as part of the <a href="https://www.phiuk.org/policy-modelling-for-health" target="_blank" rel="noopener noreferrer" style={{ color: AQUA, textDecoration: "none", borderBottom: `2px solid ${AQUA}`, paddingBottom: "2px", transition: "opacity 0.2s" }}>Policy Modelling for Health</a> research group.
+        This tool visualises outputs from <a href="https://simpaths.org/" target="_blank" rel="noopener noreferrer" style={{ color: AQUA, textDecoration: "none", borderBottom: `2px solid ${AQUA}`, paddingBottom: "2px", transition: "opacity 0.2s" }}>SimPaths</a>, an open-source, dynamic microsimulation model developed by the Centre for Microsimulation and Policy Analysis (<a href="https://www.microsimulation.ac.uk/" target="_blank" rel="noopener noreferrer" style={{ color: AQUA, textDecoration: "none", borderBottom: `2px solid ${AQUA}`, paddingBottom: "2px", transition: "opacity 0.2s" }}>CeMPA</a>) at the University of Essex. The Policy Impacts Visualiser was built by researchers at the University of Glasgow as part of the <a href="https://www.phiuk.org/policy-modelling-for-health" target="_blank" rel="noopener noreferrer" style={{ color: AQUA, textDecoration: "none", borderBottom: `2px solid ${AQUA}`, paddingBottom: "2px", transition: "opacity 0.2s" }}>Policy Modelling for Health</a> (funded by UKRI) research group.
       </p>
       <p style={{ margin: 0, lineHeight: 1.8, color: TEXT_DARK, fontSize: "clamp(14px, 2vw, 16px)" }}>
       SimPaths simulates the life-course trajectories of a population — how demographics, employment, income, wealth, health, and other variables change over time — and how those trajectories may change under a simulated a policy scenario (e.g., an increase in the minimum wage). 
       This visualiser lets you explore those simulated outcomes interactively: pick a variable, stratify it by age, gender, region and more, and compare Baseline data against Scenario data over time, at a single point in time, or as the difference between the two. 
-      For example, if you had simulated an increase in minimum wage, you could ask: did an increase in the minimum wage lead to higher self-rated health among working-age adults by 2050, and are the effects different across UK regions? 
-      To explore this, select Self-rated health as the variable, stratify the results by age and region, filtering for the working age population, and compare the Baseline and Scenario over time.
+      For the example shown here, if you had simulated an increase in the proportion of young people in education, you could ask: how does mental health change by 2050 for this scenario vs a baseline simulation, and are the effects different across age groups? 
+      To explore this, select Mental Component Summary score as the variable, stratify the results by age and compare the Baseline and Scenario over time.
       
       </p>
     </div>
@@ -396,6 +384,7 @@ function App() {
           <a href="https://simpaths.org/getting-started/data/" target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>About the Dataset</a>
           <a href={`${process.env.PUBLIC_URL}/interpreting-results.html`} target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>Interpreting the Results</a>
           <a href={`${process.env.PUBLIC_URL}/citation.html`} target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>How Do I Cite This?</a>
+          <a href={`${process.env.PUBLIC_URL}/funders.html`} target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>Funders &amp; Partners</a>
         </div>
       </div>
       <div>
@@ -412,17 +401,28 @@ function App() {
 
   {/* Getting Started — capped width so it doesn't span too wide */}
   <div style={{ background: `${AQUA}08`, border: `1px solid ${AQUA}20`, borderRadius: "8px", padding: isMobile ? "16px" : "18px", marginBottom: "18px", borderLeft: `4px solid ${AQUA}` }}>
-    <h4 style={{ margin: "0 0 10px", fontSize: "13px", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, color: TEAL }}>Getting Started</h4>
-    <p style={{ margin: "0 0 10px", lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
-      The default view displays a pre-aggregated dataset showing two simulated education policy interventions applied to 16–29 year olds in 2025, compared against a <strong>Baseline</strong> with no policy change. The <strong> Moderate Education Scenario </strong> increases the proportion of 16–29 year olds in education by 5%; the<strong> Low Education Scenario</strong> increases the proportion with in education by 2%.
-    </p>
-    <p style={{ margin: "0 0 10px", lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
-      To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output. Use "Visualise Your Own Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
-    </p>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "18px", alignItems: "flex-start", marginBottom: "10px" }}>
+  
+  {/* Left column: both paragraphs */}
+  <div style={{ flex: "1 1 320px", minWidth: 0 }}>
     <p style={{ margin: 0, lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
+      The default view displays a pre-aggregated dataset showing two simulated education policy interventions applied to 16–29 year olds in 2025, compared against a <strong>Baseline</strong> with no policy change. The <strong>Moderate Education Scenario</strong> increases the proportion of 16–29 year olds in education by 5%; the <strong>Low Education Scenario</strong> increases the proportion in education by 2%.
+    </p>
+    <p style={{ margin: "16px 0 0", lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
+      To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output. Use "Visualise Your Own Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
+      <br /><br />
       This tool is entirely JavaScript-based — all aggregation happens locally in your browser, and no data you upload is ever stored or sent anywhere.
     </p>
   </div>
+
+  {/* Right column: graphic */}
+  <div style={{ flex: "1 1 340px", minWidth: 0 }}>
+    <ScenarioGraphic isMobile={isMobile || windowWidth < 1200} />
+  </div>
+
+</div>
+  </div>
+    
 
   {/* Limitations — full width */}
   <div id="interpreting-results" style={{ background: "#fff0ee", border: `1px solid #e07060`, borderRadius: "8px", padding: isMobile ? "14px 16px" : "16px 20px", borderLeft: `4px solid #d04030` }}>
@@ -701,16 +701,7 @@ function App() {
             </a>
           </div>
 
-          {/* FAR RIGHT: PNG slot — e.g. funder/partner logos. Drop the image at
-              public/bottom_banner_image.png; the slot stays invisible until it exists. */}
-          <div style={{ width: windowWidth < 1024 ? "100%" : "200px", flexShrink: 0, background: "rgba(255, 255, 255, 0.14)", border: "1px solid rgba(255, 255, 255, 0.25)", borderRadius: "10px", padding: "14px", minHeight: "80px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <img
-              src={`${process.env.PUBLIC_URL}/UKRILogo.png`}
-              alt="UKRI funder logo"
-              style={{ maxWidth: "100%", maxHeight: "90px", objectFit: "contain", display: "block" }}
-              onError={(e) => { e.currentTarget.style.display = "none"; }}
-            />
-          </div>
+          
         </div>
       </div>
     </div>

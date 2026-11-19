@@ -68,9 +68,12 @@ src/
 
 public/
 ├── SimPaths_All_Aggregated_Outputs.csv   # Default pre-aggregated dataset
-├── pmh_logo.png                          # Header logo
-├── Interpreting-results.html             # In-app guidance page
+├── pmh_logo.png                          # PHI UK / Policy Modelling for Health logo (funders page)
+├── UKRILogo.png                          # UKRI logo (funders page, footer)
+├── SimPaths-logo-transparent.png         # SimPaths logo (header, funders page)
+├── interpreting-results.html             # In-app guidance page
 ├── citation.html                         # Citation information
+├── funders.html                          # Funders & partners page
 └── bottom_banner_image.png               # Optional footer logo
 ```
 
@@ -149,7 +152,18 @@ See `COLUMN_MAP` in `parseCore.js` for the full list of expected raw column name
 1. **Discovery** — folder tree is scanned for `Baseline`/scenario subfolders and run folders.
 2. **Serial processing** — each run's CSVs are read on the main thread then immediately accumulated. Only one run's text lives in memory at a time.
 3. **Per-run aggregation** (`parseCore.js`) — CSVs are joined, column names mapped, and data reduced into weighted means/shares per year broken down by every stratifier.
-4. **Cross-run aggregation** (`finaliseAggregation`) — computes cross-run mean, SD, and 95% CI. A **paired delta** (Scenario − Baseline matched by seed) is computed for each scenario. Estimates with `min_sample < 20` are suppressed.
+4. **Cross-run aggregation** (`finaliseAggregation`) — computes cross-run mean, SD, and 95% CI. A **paired delta** (Scenario − Baseline matched by seed) is computed for each scenario. See [Missing values and suppression](#missing-values-and-suppression) below.
+
+### Missing values and suppression
+
+**Missing values (−9).** SimPaths codes missing values as `-9`. When reading your own simulation output, any cell equal to `-9` (or blank, `null`, `undefined`) is treated as missing, for every variable and every stratifier. Specifically:
+
+- **Continuous variables** (e.g. income, hourly earnings, health scores, hours worked): missing values are excluded from the weighted mean. They are never treated as 0. The share of missing values is reported in the chart tooltip (e.g. "X% missing") rather than plotted.
+- **Categorical variables** (e.g. employment status, disability): missing values are excluded from both the numerator and the denominator, so the shares of the valid categories sum to 100%. `-9` never appears as its own category.
+- **Distribution charts** (hourly earnings and income bins): missing values are not placed in any band (including £0) and are excluded from the denominator, so band percentages are percentages of people with a valid value.
+- **Stratifiers** (Age, Gender, Region, etc.): a person with a missing stratifier value is excluded from that breakdown (but still counted in the Overall figures). Missing values are dropped before any recoding, so, for example, a `-9` gender or age is never recoded into "Female" or "Under 18".
+
+**Suppression.** An estimate is only shown if **every** run has at least 20 unweighted observations behind it (`MIN_RUN_SAMPLE` in `parseCore.js`). If any single run has fewer than 20 — including a run in which the group does not appear at all (0 observations) — the estimate, its 95% CI, and any Baseline → Scenario paired delta involving it are all suppressed. The threshold applies per run, not to the sample pooled across runs. Suppressed estimates appear as gaps in line charts, or as "Sample too small — suppressed" panels.
 
 ## Dashboard views & controls
 
@@ -207,13 +221,16 @@ Everything runs locally in the browser. Nothing you select via "Visualise Your O
 | Scenario line styles | `SCENARIO_DASHES` in `DashboardSection.js` |
 | Scenario colours (numeric variables) | `NUMERIC_BASE_COLOUR`, `NUMERIC_SCEN_COLOURS` in `DashboardSection.js` |
 | Raw CSV → display-name mapping | `COLUMN_MAP` in `parseCore.js` |
-| Suppression threshold | `min_sample < 20` in `finaliseAggregation()` in `parseCore.js` |
+| Suppression threshold | `MIN_RUN_SAMPLE` (per-run minimum, default 20) in `parseCore.js` |
 | Default dataset description in intro card | Edit the Getting Started section in `App.js` |
 
 ## Known limitations
 
 - Outputs are simulated data for research purposes only — not forecasts or official statistics.
-- Every figure is a cross-run mean with a 95% CI; estimates with insufficient sample sizes are suppressed.
+- Every figure is a cross-run mean with a 95% CI; estimates are suppressed unless every run has at least 20 observations behind them.
+- A 95% interval needs at least 2 runs (or 2 matched Baseline/Scenario pairs for differences). With a single run the estimate is still shown, but no interval is drawn and the tooltip says so.
+- With fewer than 5 runs in any scenario, a warning is shown above the charts and on every affected tooltip (`MIN_RUNS_WARN` in `DashboardSection.js`): uncertainty intervals from so few runs are unreliable.
+- `-9` is treated as missing everywhere; if any variable uses `-9` as a genuine value, it will be wrongly excluded.
 - Baseline → Scenario differences reflect the modelled policy effect, not an observed real-world outcome.
 - "Visualise Your Own Data" requires a Chromium-based browser.
 

@@ -644,7 +644,12 @@ export function parseCsvRow(d) {
     else if (v===""||v==="na"||v==="nan"||v==="null"||v==="undefined") variable_value="Missing";
     // else: leave unchanged (e.g. already "Missing" from upstream)
   }
-  return {
+  // Enforce the same rule as parseCore.js (MIN_RUN_SAMPLE): if any single
+  // run had fewer than 20 observations, suppress the estimate and its delta.
+  // Only applied when the CSV actually has a minimum-sample column.
+  const rawMin = d.min_sample ?? d["Minimum Sample: Across Runs"];
+  const belowMin = rawMin !== undefined && rawMin !== "" && rawMin !== "NA" && !isNaN(+rawMin) && +rawMin < 20;
+  const out = {
     year:             +d.Year            || +d.year,
     scenario:         (d.scenario        || d.Scenario || "baseline").toLowerCase(),
     module:           d.module           || d.Module,
@@ -669,6 +674,14 @@ export function parseCsvRow(d) {
     paired_upper_ci:    parseCI(d.paired_upper_ci ?? d.paired_ci_upper),
     paired_n_runs:      +(d.paired_n_runs ?? 0) || 0,
   };
+  // No CI can be computed from a single run / single matched pair.
+  if (out.n_runs < 2) { out.lower_ci = out.upper_ci = NaN; }
+  if (out.paired_n_runs < 2) { out.paired_lower_ci = out.paired_upper_ci = NaN; }
+  if (belowMin) {
+    out.mean_value = out.lower_ci = out.upper_ci = NaN;
+    out.paired_mean_delta = out.paired_lower_ci = out.paired_upper_ci = NaN;
+  }
+  return out;
 }
 /** Parses a numeric field that may legitimately be missing/suppressed (empty string, "NaN", "NA") — returns NaN rather than 0 for those, so suppressed estimates aren't mistaken for a real zero value downstream. */
 function parseMaybeNaN(v) {

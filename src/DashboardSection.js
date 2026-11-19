@@ -105,10 +105,19 @@ function fmtDelta(v,isCat){
 /** Formats a row's sample-size info for a tooltip, e.g. "Sample: 1,234 (12 runs)" — pooled total_sample across every contributing run, plus how many runs contributed. Returns "" (nothing to append) if the row has no usable sample info. */
 /** Formats a row's sample-size info for a tooltip, e.g. "Sample: 103 (avg across 12 runs)" — the average per-run sample size for that specific variable/stratifier/baseline-or-scenario slice, not the pooled total across runs. Returns "" if the row has no usable sample info. */
 const fmt1dp = n => n?.toLocaleString(undefined,{maximumFractionDigits:1}) ?? "";
+/** Below this many runs, tooltips warn that the 95% interval is unreliable.
+ *  Keep in sync with MIN_RUNS_WARN in App.js (the warning above the charts). */
+export const MIN_RUNS_WARN = 5;
+/** Tooltip line warning about a low run count; "" when n is fine or unknown. */
+function fmtRunsWarning(n){
+  if (n==null||isNaN(n)||n>=MIN_RUNS_WARN) return "";
+  if (n===1) return `<br/><span style="color:#b45309;font-weight:600">⚠ Based on a single run — no uncertainty interval can be computed</span>`;
+  return `<br/><span style="color:#b45309;font-weight:600">⚠ Based on only ${n} run${n===1?"":"s"} — the uncertainty interval may be unreliable</span>`;
+}
 function fmtSample(row){
   if (!row||row.mean_sample==null||isNaN(row.mean_sample)) return "";
   const n=row.n_runs;
-  return `<br/>Sample: ${fmt1dp(row.mean_sample)}${n!=null?` (avg across ${n} run${n===1?"":"s"})`:""}`;
+  return `<br/>Sample: ${fmt1dp(row.mean_sample)}${n!=null?` (avg across ${n} run${n===1?"":"s"})`:""}`+fmtRunsWarning(n);
 }
 /** Delta-specific variant of fmtSample() — shows paired run count when a paired
  *  delta is available, otherwise both sides' avg sample size. */
@@ -117,10 +126,11 @@ function fmtDeltaSample(row){
   if (row.paired_n_runs>0){
     const extra=row.base_mean_sample!=null&&row.scen_mean_sample!=null
       ?` · Sample: B ${fmt1dp(row.base_mean_sample)} / S ${fmt1dp(row.scen_mean_sample)}`:"";
-    return `<br/>Paired runs: ${row.paired_n_runs}${extra}`;
+    return `<br/>Paired runs: ${row.paired_n_runs}${extra}`+fmtRunsWarning(row.paired_n_runs);
   }
   if (row.base_mean_sample==null||row.scen_mean_sample==null) return "";
-  return `<br/>Sample: Baseline ${Math.round(row.base_mean_sample).toLocaleString()} · Scenario ${Math.round(row.scen_mean_sample).toLocaleString()}`;
+  const minRuns=Math.min(row.base_n_runs??Infinity,row.scen_n_runs??Infinity);
+  return `<br/>Sample: Baseline ${Math.round(row.base_mean_sample).toLocaleString()} · Scenario ${Math.round(row.scen_mean_sample).toLocaleString()}`+fmtRunsWarning(isFinite(minRuns)?minRuns:null);
 }
 /**
  * Formats a numeric variable's missingness for a data point's tooltip, e.g.
@@ -580,7 +590,7 @@ function exportCsv(data, filename, {isDelta=false, isContinuous=false}={}){
   const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([csvRows.join("\n")],{type:"text/csv"})); a.download=filename; a.click(); URL.revokeObjectURL(a.href);
 }
 
-/** Placeholder shown instead of a chart/panel when its underlying sample is too small to display reliably (see parseCore.js's min_sample<100 suppression rule). */
+/** Placeholder shown instead of a chart/panel when its underlying sample is too small to display reliably (see parseCore.js's MIN_RUN_SAMPLE rule: suppressed if any single run has fewer than 20 observations). */
 function SmallSampleOverlay(){
   return <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(239,236,228,0.85)",borderRadius:8,zIndex:5,padding:16,textAlign:"center"}}>
     <p style={{margin:0,fontSize:12,color:TEXT_M,fontStyle:"italic"}}>Sample too small — suppressed.</p>
@@ -2341,12 +2351,11 @@ function WageDistributionChart({ baselineData, scenarioData, year, showAllYears,
       const bin = r.variable_value;
       if (!acc.has(sv)) acc.set(sv, new Map());
       const bMap = acc.get(sv);
-      if (!bMap.has(bin)) bMap.set(bin, { sum: 0, count: 0, loSum: 0, hiSum: 0, n_runs: r.n_runs });
+      if (!bMap.has(bin)) bMap.set(bin, { sum: 0, count: 0, loSum: 0, hiSum: 0, ciCount: 0, n_runs: r.n_runs });
       const entry = bMap.get(bin);
       entry.sum   += r.mean_value;
       entry.count += 1;
-      if (!isNaN(r.lower_ci)) entry.loSum += r.lower_ci;
-      if (!isNaN(r.upper_ci)) entry.hiSum += r.upper_ci;
+      if (!isNaN(r.lower_ci) && !isNaN(r.upper_ci)) { entry.loSum += r.lower_ci; entry.hiSum += r.upper_ci; entry.ciCount += 1; }
     }
     // Convert to the same shape buildLookup produces, keyed under "Average"
     const avgMap = new Map();
@@ -2354,11 +2363,11 @@ function WageDistributionChart({ baselineData, scenarioData, year, showAllYears,
       if (!avgMap.has("Average")) avgMap.set("Average", new Map());
       const svMap = avgMap.get("Average");
       const out   = new Map();
-      for (const [bin, { sum, count, loSum, hiSum, n_runs }] of bMap) {
+      for (const [bin, { sum, count, loSum, hiSum, ciCount, n_runs }] of bMap) {
         out.set(bin, count > 0 ? {
           mean_value: sum / count,
-          lower_ci:   count > 0 ? loSum / count : NaN,
-          upper_ci:   count > 0 ? hiSum / count : NaN,
+          lower_ci:   ciCount > 0 ? loSum / ciCount : NaN,
+          upper_ci:   ciCount > 0 ? hiSum / ciCount : NaN,
           n_runs,
         } : { mean_value: NaN, lower_ci: NaN, upper_ci: NaN });
       }
@@ -2463,7 +2472,7 @@ function WageDistributionChart({ baselineData, scenarioData, year, showAllYears,
           const bh = iH - by;
           if (bh <= 0) continue;
 
-          const ttHtml = `<strong>${bl}</strong>${stratTip}<br/>${scenLbl}: ${(v*100).toFixed(1)}%`;
+          const ttHtml = `<strong>${bl}</strong>${stratTip}<br/>${scenLbl}: ${(v*100).toFixed(1)}%`+(typeof row === "object" ? fmtRunsWarning(row.n_runs) : "");
 
           if (isScen) {
             pg.append("rect").attr("x",bx+gx).attr("y",by).attr("width",bw).attr("height",bh)

@@ -218,9 +218,15 @@ export const ALL_DISPLAY_VARS = [
 // Replaces the previous isValid() which called String() on every value.
 // The hot path (non-null, non-empty string from a CSV cell) exits after
 // one null check + a length check — no string allocation needed.
+// SimPaths uses -9 as its missing-value code. Any cell equal to -9 is
+// treated exactly like a blank cell, for every variable and stratifier.
+export function isMissingCode(val) {
+  return val === -9 || val === "-9" || val === "-9.0" || (typeof val === "string" && val.trim() !== "" && +val === -9);
+}
 function notMissing(val) {
   if (val == null) return false;
   if (val === "") return false;
+  if (isMissingCode(val)) return false;
   // only allocate a string comparison for the rare sentinel values
   if (val === "null" || val === "undefined") return false;
   return true;
@@ -400,9 +406,9 @@ function parsePersonCsv(text, benefitMap) {
             val = cellVal;
           } else {
             const bv = bRow[rawKey];
-            val = (bv !== undefined && bv !== "") ? bv : cellVal;
+            val = (bv !== undefined && bv !== "" && !isMissingCode(bv)) ? bv : cellVal;
           }
-          if (val !== undefined && val !== "") row[disp] = val;
+          if (val !== undefined && val !== "" && !isMissingCode(val)) row[disp] = val;
         }
 
         // Also pull benefit-only columns that aren't in the person file at all
@@ -412,7 +418,7 @@ function parsePersonCsv(text, benefitMap) {
           for (const [rawKey, disp] of colMapEntries) {
             if (row[disp] === undefined) {
               const bv = bRow[rawKey];
-              if (bv !== undefined && bv !== "") row[disp] = bv;
+              if (bv !== undefined && bv !== "" && !isMissingCode(bv)) row[disp] = bv;
             }
           }
         }
@@ -525,10 +531,10 @@ export async function parsePersonCsvStream(personFileHandle, benefitMap) {
         const rawKey=wantedKey[i], cellVal=cells[wantedPos[i]];
         let val;
         if (PERSON_ONLY_KEYS.has(rawKey)||!bRow) { val=cellVal; }
-        else { const bv=bRow[rawKey]; val=(bv!==undefined&&bv!=="")?bv:cellVal; }
-        if (val!==undefined&&val!=="") row[disp]=val;
+        else { const bv=bRow[rawKey]; val=(bv!==undefined&&bv!==""&&!isMissingCode(bv))?bv:cellVal; }
+        if (val!==undefined&&val!==""&&!isMissingCode(val)) row[disp]=val;
       }
-      if (bRow) { for (const [rawKey,disp] of colMapEntries) { if (row[disp]===undefined) { const bv=bRow[rawKey]; if (bv!==undefined&&bv!=="") row[disp]=bv; } } }
+      if (bRow) { for (const [rawKey,disp] of colMapEntries) { if (row[disp]===undefined) { const bv=bRow[rawKey]; if (bv!==undefined&&bv!==""&&!isMissingCode(bv)) row[disp]=bv; } } }
       if (row["Age"]!=null) row["Age"]=binAge(row["Age"]);
       if (row["Number of children"]!=null) row["Number of children"]=binChildren(row["Number of children"]);
       if (row["Region"]!=null) row["Region"]=REGION_MAP[String(row["Region"])]??row["Region"];
@@ -966,6 +972,11 @@ export function aggregateSingleRun(rows, scenario, runId) {
 //   paired_upper_ci / paired_n_runs. This paired approach removes stochastic
 //   variation that is shared between matched runs — the 95% CI is computed as
 //   mean_delta ± 1.96 × SE, where SE = SD_delta / √(n_paired_runs).
+/** Minimum unweighted sample required in EVERY run for an estimate to be shown.
+ *  If any single run has fewer than this (including 0, i.e. the group is absent
+ *  from that run), the estimate, its CI and any paired delta are all suppressed. */
+export const MIN_RUN_SAMPLE = 20;
+
 /** Create a new empty accumulator for incremental cross-run aggregation. */
 export function createGroupedAccumulator() {
   return new Map();
@@ -1018,6 +1029,20 @@ export function finaliseAggregation(grouped) {
     }
   }
 
+  // Number of runs per scenario (the "Overall" rows exist in every run, so the
+  // largest per-group run count equals the total runs for that scenario).
+  // A group seen in fewer runs had a sample of 0 in at least one run.
+  const runsPerScenario = new Map();
+  for (const g of grouped.values()) {
+    if (g.count > (runsPerScenario.get(g.scenario) ?? 0)) runsPerScenario.set(g.scenario, g.count);
+  }
+  const baseOk = new Map();
+  for (const g of grouped.values()) {
+    if (g.scenario !== "baseline") continue;
+    const nonKey = `${g.year}|${g.variable}|${g.variable_value}|${g.stratifier}|${g.stratifier_value}|${g.metric_type}`;
+    baseOk.set(nonKey, g.minN >= MIN_RUN_SAMPLE && g.count >= runsPerScenario.get("baseline"));
+  }
+
   const finalRows = [];
   for (const [key, g] of grouped) {
     const { year, scenario, variable, variable_value, stratifier,
@@ -1032,16 +1057,24 @@ export function finaliseAggregation(grouped) {
     const mean_sample  = n_runs > 0 ? total_sample / n_runs : 0;
 
     let mean_value = mean;
-    let lower_ci   = mean_value - 1.96 * se_value;
-    let upper_ci   = mean_value + 1.96 * se_value;
-    if (total_sample < 20) { mean_value = NaN; lower_ci = NaN; upper_ci = NaN; }
+    // A 95% CI needs at least 2 runs: with 1 run the SD is undefined, so the
+    // interval is left blank (NaN) rather than drawn as a zero-width band.
+    let lower_ci   = n_runs >= 2 ? mean_value - 1.96 * se_value : NaN;
+    let upper_ci   = n_runs >= 2 ? mean_value + 1.96 * se_value : NaN;
+    // Suppress if ANY single run had fewer than MIN_RUN_SAMPLE observations
+    // behind this estimate (per-run minimum, not the pooled total).
+    // A group missing from some runs had 0 observations in those runs.
+    const suppressed = min_sample < MIN_RUN_SAMPLE || n_runs < (runsPerScenario.get(scenario) ?? 0);
+    if (suppressed) { mean_value = NaN; lower_ci = NaN; upper_ci = NaN; }
 
     let paired_mean_delta = NaN, paired_lower_ci = NaN, paired_upper_ci = NaN, paired_n_runs = 0;
     if (scenario !== "baseline") {
       const p = key.split("|");
       const nonKey = `${p[0]}|${p[2]}|${p[3]}|${p[4]}|${p[5]}|${p[6]}`;
       const bVals  = baseVals.get(nonKey);
-      if (bVals && runVals && runVals.size > 0) {
+      // Also suppress the paired delta if either side fails the per-run threshold
+      const baseSuppressed = !baseOk.get(nonKey);
+      if (!suppressed && !baseSuppressed && bVals && runVals && runVals.size > 0) {
         let pCount = 0, pMean = 0, pM2 = 0;
         for (const [seed, sVal] of runVals) {
           const bVal = bVals.get(seed);
@@ -1057,8 +1090,9 @@ export function finaliseAggregation(grouped) {
           const pSd = pCount > 1 ? Math.sqrt(pM2 / (pCount - 1)) : 0;
           const pSe = pSd / Math.sqrt(pCount);
           paired_mean_delta = pMean;
-          paired_lower_ci   = pMean - 1.96 * pSe;
-          paired_upper_ci   = pMean + 1.96 * pSe;
+          // Same rule for the paired delta: no interval from a single matched pair.
+          paired_lower_ci   = pCount >= 2 ? pMean - 1.96 * pSe : NaN;
+          paired_upper_ci   = pCount >= 2 ? pMean + 1.96 * pSe : NaN;
         }
       }
     }
