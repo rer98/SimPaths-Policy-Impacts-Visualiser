@@ -2765,9 +2765,9 @@ function DeltaSection({baseData,scenData,colourMap,highlighted,isCategorical,
  * Each scenario's button uses the matching SCENARIO_DASHES pattern as a
  * visual cue so the button matches what's drawn on the chart.
  */
-function ScenarioToggles({showBaseline,setShowBaseline,allScenarioNames,enabledScenarios,setEnabledScenarios,isCategorical=true}){
+function ScenarioToggles({showBaseline,setShowBaseline,allScenarioNames,enabledScenarios,setHiddenScenarios,isCategorical=true}){
   const scenarioLabel=useComparisonLabel();
-  const togScen=name=>setEnabledScenarios(prev=>{
+  const togScen=name=>setHiddenScenarios(prev=>{
     const n=new Set(prev);
     n.has(name)?n.delete(name):n.add(name);
     return n;
@@ -2823,7 +2823,9 @@ export default function DashboardSection({parsedCache:fullRows,targetVariable,sh
   const [enabledVarVals,setEnabledVarVals]=useState(new Set());
   const [highlighted,   setHighlighted]   =useState(new Set());
   const [showBaseline,  setShowBaseline]  =useState(true);
-  const [enabledScenarios,setEnabledScenarios]=useState(()=>new Set(allScenarioNames)); // scenario names currently shown
+  // Remember explicit opt-outs across catalogue updates for this data source.
+  const [hiddenScenarios,setHiddenScenarios]=useState(()=>new Set());
+  const enabledScenarios=useMemo(()=>new Set(allScenarioNames.filter(name=>!hiddenScenarios.has(name))),[allScenarioNames,hiddenScenarios]);
   const [showCI,        setShowCI]        =useState(true);
 
   // Only connected hosts opt in. Rows already contain the maintained
@@ -2981,10 +2983,6 @@ export default function DashboardSection({parsedCache:fullRows,targetVariable,sh
     const scope=targetVariable+":"+varValuesKey;
     if(!view.loading&&!view.error&&lastValues.current!==scope){lastValues.current=scope;setEnabledVarVals(new Set(JSON.parse(varValuesKey)));}
   },[varValuesKey,targetVariable,view.loading,view.error]);
-  // Catalogue updates keep explicit user choices. Added scenarios stay available
-  // but unselected; a new data-source key still mounts with all scenarios shown.
-  useEffect(()=>setEnabledScenarios(previous=>new Set([...previous].filter(name=>allScenarioNames.includes(name)))),[allScenarioNames]);
-
   // scenarioMap filtered to current stratifier — used by LineChart in combined mode
   // Must be at top level (not inside JSX) to satisfy hooks rules
   const filteredScenMap=useMemo(()=>{
@@ -3127,7 +3125,7 @@ export default function DashboardSection({parsedCache:fullRows,targetVariable,sh
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
               <span style={controlLabel}>View</span>
               <ScenarioToggles showBaseline={showBaseline} setShowBaseline={setShowBaseline}
-                allScenarioNames={allScenarioNames} enabledScenarios={enabledScenarios} setEnabledScenarios={setEnabledScenarios} isCategorical={isCategorical}/>
+                allScenarioNames={allScenarioNames} enabledScenarios={enabledScenarios} setHiddenScenarios={setHiddenScenarios} isCategorical={isCategorical}/>
             </div>
           </div>
 
@@ -3225,7 +3223,7 @@ export default function DashboardSection({parsedCache:fullRows,targetVariable,sh
 
           <span style={controlLabel}>View</span>
           <ScenarioToggles showBaseline={showBaseline} setShowBaseline={setShowBaseline}
-            allScenarioNames={allScenarioNames} enabledScenarios={enabledScenarios} setEnabledScenarios={setEnabledScenarios} isCategorical={isCategorical}/>
+            allScenarioNames={allScenarioNames} enabledScenarios={enabledScenarios} setHiddenScenarios={setHiddenScenarios} isCategorical={isCategorical}/>
 
           {/* Layout — only when stratified + line + time series */}
           {activeTab==="timeseries"&&isStratified&&chartType==="line"&&!showWageDist&&(

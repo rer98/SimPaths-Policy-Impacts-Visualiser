@@ -83,7 +83,7 @@ test("chart CSV buttons export all displayed alternatives and honour scenario to
   }finally{global.Blob=originalBlob;}
 });
 
-test("arriving configurations keep manual selections and source keys reset them", async () => {
+test("arriving scenarios are shown, hidden scenarios stay hidden, and a new source resets the choices", async () => {
   const originalBlob = global.Blob;
   let saved;
   global.Blob = class { constructor(parts) { saved = parts.join(""); } };
@@ -102,10 +102,14 @@ test("arriving configurations keep manual selections and source keys reset them"
     rerender(<App dataSource={source(next)} />);
     await screen.findByRole("button", { name: /Policy C/ });
     fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
-    expect(new Set(csvParse(saved).map(value => value.scenario))).toEqual(new Set(["baseline", "scenario_1"]));
-    fireEvent.click(screen.getByRole("button", { name: /Policy C/ }));
-    fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
     expect(new Set(csvParse(saved).map(value => value.scenario))).toEqual(new Set(["baseline", "scenario_1", "scenario_3"]));
+    fireEvent.click(screen.getByRole("button", { name: /Policy C/ }));
+    rerender(<App dataSource={source(first)} />);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Policy C/ })).toBeNull());
+    rerender(<App dataSource={source(next)} />);
+    await screen.findByRole("button", { name: /Policy C/ });
+    fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
+    expect(new Set(csvParse(saved).map(value => value.scenario))).toEqual(new Set(["baseline", "scenario_1"]));
     rerender(<App dataSource={{ ...source(next), key: "different-experiment" }} />);
     await waitFor(() => expect(screen.queryByText(/Loading chart/)).toBeNull());
     fireEvent.click(screen.getAllByRole("button", { name: "↓ CSV" })[0]);
