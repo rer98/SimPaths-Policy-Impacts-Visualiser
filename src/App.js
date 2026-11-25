@@ -15,19 +15,37 @@
  * in DashboardSection.js and useAggregatedData.js respectively. App.js's
  * job is page chrome + data sourcing, not visualisation.
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import * as d3 from "d3";
-import DashboardSection from "./DashboardSection";
+import DashboardSection, { MIN_RUNS_WARN } from "./DashboardSection";
 import ScenarioGraphic from "./ScenarioGraphic";
-import { parseCsvRow } from "./useAggregatedData";
+import StaticPage from "./StaticPage";
+import { DatasetPage, ResourcesPage, BENEFIT_UNIT_DEFINITION } from "./InfoPages";
+import { parseCsvRow, scenarioLabel, titleCase } from "./useAggregatedData";
 import { parseLocalFolder } from "./localFolderParser";
+
+/** Top navigation tabs. Each has its own URL (#/id) so links can be shared and
+ *  the browser's back button works. */
+const TABS = [
+  { id: "home",                 label: "Visualiser" },   // id stays "home" so existing links keep working
+  { id: "dataset",              label: "Dataset" },
+  { id: "interpreting-results", label: "Interpreting Results" },
+  { id: "citation",             label: "Citation" },
+  { id: "funders",              label: "Funders & Partners" },
+  { id: "resources",            label: "More Resources" },
+];
+const tabFromHash = () => {
+  const id = (typeof window !== "undefined" ? window.location.hash : "").replace(/^#\/?/, "");
+  // The visualiser is now on the Home page, so old "#/visualiser" links open Home.
+  return TABS.some(t => t.id === id) ? id : "home";
+};
 
 /** Which variables appear under each of the four topic-chip domains in the intro card, and their display order within that domain. */
 const DOMAIN_SECTIONS = {
   "Demographics": [
     "Highest Level of Education", "Ethnicity", "Partnership status",
-    "Population Pyramid",
-      "Household Type" // ,"Number of children"
+    "Population Pyramid", "Population size",
+      "Household Type", // ,"Number of children"
   ],
   "Activity status": ["Employment status", "Hours worked"],
   "Income": [
@@ -38,11 +56,11 @@ const DOMAIN_SECTIONS = {
     "Amount of benefits received per month"
   ],
   "Health": [
-    "Self-Rated Health",  "Disability Status",
+    // "Self-Rated Health", // temporarily disabled
+    "Disability Status",
     // "Psychological distress flag", // temporarily disabled
     "Psychological distress score", "Mental Component Summary (MCS)", "Physical Component Summary (PCS)", "Life Satisfaction Score",
-    "Subjective wellbeing (GHQ)", "Need of social care",
-    // "Provided social care", // temporarily disabled
+    "Subjective wellbeing (GHQ)", "Received care", "Provided care",
   ]
 };
 
@@ -56,10 +74,11 @@ const DOMAIN_BLURBS = {
 
 /** Tooltip/help text shown alongside each variable in the sidebar variable picker. Exported so DashboardSection (or any other consumer) can reuse the same descriptions. */
 export const VARIABLE_DESCRIPTIONS = {
-  "Highest Level of Education":           "Highest qualification attained (e.g., high, medium, low or in education).",
+  "Highest Level of Education":           "Highest qualification attained. High education (degree), medium education (Other higher degree, A-level, GCSE etc.), and low education (other qualification, no qualification).",
   "Ethnicity":                            "Self-identified ethnic group classification.",
   "Partnership status":                   "Whether an individual is single or partnered.",
-  "Population Pyramid":                   "Age structure of the simulated population, split by gender. Bars show the share of each age band among males (right) and females (left).",
+  "Population size":                      "Number of people in the simulated population. Averaged across model runs; stratify to see the number in each group.",
+  "Population Pyramid":                   "Age structure of the simulated population, split by gender. Each bar shows that age band and gender as a share of the total population (males on the right, females on the left); all bars together add up to 100%.",
   //"Number of children":                   "Count of dependent children in the household.", // temporarily disabled
    "Household Type":                       "Benefit unit composition (e.g., single adult, couple with/without children).", // temporarily disabled — still works as a stratifier
   "Employment status":                    "Current labour market status (e.g., employed, unemployed, retired, student).",
@@ -74,16 +93,30 @@ export const VARIABLE_DESCRIPTIONS = {
    "Capital Income":                       "Income from assets such as savings, investments, or property.", // temporarily disabled
   "Amount of benefits received per month":"Monthly monetary value of welfare benefits received, in GBP (£).",
   "Disability Status":                    "Whether the individual reports a limiting long-term illness or disability.",
-  "Self-Rated Health":                    "Individual's own assessment of overall health (from excellent to poor).",
+  // "Self-Rated Health":                 "Individual's own assessment of overall health (from excellent to poor).",
   // "Psychological distress flag":          "Indicator of clinically relevant mental distress.", // temporarily disabled
-  "Psychological distress score":         "Continuous score measuring mental distress severity (from 0–12).",
   "Mental Component Summary (MCS)":       "Mental Component Summary: summary score of mental health-related quality of life (from 0–100).",
   "Physical Component Summary (PCS)":     "Physical Component Summary: summary score of physical health-related quality of life (from 0–100).",
   "Life Satisfaction Score":              "Overall life satisfaction measure (from 0–10).",
+  "Psychological distress score":         "Subjective wellbeing (GHQ): Scale 0 (the least distressed) to 12 (the most distressed)",
   "Subjective wellbeing (GHQ)":           "Self-reported wellbeing measure summing values from the General Health Questionnaire from 0 (indicating the least amount of distress) to 36 (indicating the greatest amount of distress).",
-  "Need of social care":                  "Whether an individual has assessed needs for assistance with daily living due to health or disability.",
-  // "Provided social care":                 "Whether an individual provides informal care to others.", // temporarily disabled
+  "Provided care":                        "Whether someone in the benefit unit provides social care to someone else.",
+  "Received care":                        "Whether the individual receives social care whether informal (e.g. from family or friends), formal (paid) care, or mixed.",
 };
+
+/** Adds a small ⓘ after the first "benefit unit" in a description; hovering
+ *  (or focusing) it shows what a benefit unit is. */
+function withBenefitUnitInfo(text) {
+  const m = /benefit unit/i.exec(text || "");
+  if (!m) return text;
+  const end = m.index + m[0].length;
+  return (<>
+    {text.slice(0, end)}
+    <span tabIndex={0} role="note" title={`Benefit unit: ${BENEFIT_UNIT_DEFINITION}`} aria-label={`Benefit unit: ${BENEFIT_UNIT_DEFINITION}`}
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 15, height: 15, margin: "0 2px 0 4px", borderRadius: "50%", border: "1px solid #14687c", color: "#14687c", fontSize: 10, fontStyle: "normal", fontWeight: 700, cursor: "help", verticalAlign: "1px" }}>i</span>
+    {text.slice(end)}
+  </>);
+}
 
 /**
  * Top-level page component. See the file header above for what it owns vs.
@@ -93,6 +126,23 @@ export const VARIABLE_DESCRIPTIONS = {
  */
 function App() {
   const [activeVariable, setActiveVariable]   = useState("Highest Level of Education");
+  const [tab, setTab] = useState(tabFromHash);   // which top tab is showing
+  // Follow the URL (#/id), so back/forward and shared links land on the right tab.
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  /** Switch tab (updates the URL too) and scroll back to the top of the page.
+   *  "visualiser" opens Home and scrolls down to the visualiser (Connect Data). */
+  const navigate = useCallback((id) => {
+    const toVis = id === "visualiser";
+    if (toVis) id = "home";
+    if (window.location.hash !== `#/${id}`) window.location.hash = `/${id}`;
+    setTab(id);
+    if (toVis) setTimeout(() => connectDataRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    else window.scrollTo({ top: 0 });
+  }, []);
   const [parsedCache,    setParsedCache]       = useState([]);       // full dataset — default CSV or user upload, normalised to one row shape
   const [isUsingDefault, setIsUsingDefault]   = useState(true);      // true = showing bundled default data, false = user-uploaded folder
   const [defaultLoadFailed, setDefaultLoadFailed] = useState(false); // true = the default CSV fetch/parse failed — distinct from isUsingDefault, which alone can't tell success from failure
@@ -179,6 +229,7 @@ function App() {
       setIsProcessing(true);
       setStatusMessage("Reading local folder hierarchy...");
       const freshlyAggregated = await parseLocalFolder(directoryHandle, msg => setStatusMessage(msg));
+      if (!Array.isArray(freshlyAggregated)) throw new Error("Aggregation returned no data.");
       setParsedCache(freshlyAggregated);
       setIsUsingDefault(false);
       setDefaultLoadFailed(false);
@@ -199,6 +250,7 @@ function App() {
   };
 
   const mainVizRef = useRef(null);
+  const connectDataRef = useRef(null);   // the Connect Data panel (start of the visualiser)
   /** Selects a domain's first variable and scrolls the main visualisation into view — used by the intro card's topic chips as a "jump straight to this domain" shortcut. */
   const jumpToDomain = (domain) => {
     const firstVar = DOMAIN_SECTIONS[domain]?.[0];
@@ -212,9 +264,9 @@ function App() {
   // (interpreting-results.html / citation.html) — if you change these, update
   // all four places to keep the "in progress" gate, dashboard, and standalone
   // docs pages visually consistent.
-  const BG       = "#f3ede3";
-  const BG_DARK  = "#faf7ef";
-  const BG_PANEL = "#f3ede3";
+  const BG       = "#f7f3ed";
+  const BG_DARK  = "#fcfaf5";
+  const BG_PANEL = "#f7f3ed";
   const TEAL     = "#14687c";
   const AQUA = "#0f93a1";
   const CORAL    = "#ff6e51";
@@ -226,6 +278,56 @@ function App() {
   // Compact pill variant used inline next to the "Explore changes across..." text
   const smallLinkStyle = { color: AQUA, textDecoration: "none", fontSize: "12px", padding: "5px 10px", background: `${AQUA}10`, borderRadius: "6px", border: `1px solid ${AQUA}30`, transition: "all 0.2s", display: "inline-flex", alignItems: "center", fontWeight: 500, whiteSpace: "nowrap" };
   const [showFolderStructure, setShowFolderStructure] = useState(false);
+  // Home page drop-down sections (both start closed).
+  const [homeOpen, setHomeOpen] = useState({ scenario: false, limits: false });
+  const toggleHomeSection = key => setHomeOpen(o => ({ ...o, [key]: !o[key] }));
+  /** "The default view: education policy scenario" drop-down, in the intro
+   *  card on the Home page. */
+  const renderDefaultViewSection = key => (<>
+  <button type="button" onClick={() => toggleHomeSection(key)} aria-expanded={!!homeOpen[key]} aria-controls={`home-${key}`}
+    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: "none", border: "none", borderBottom: `1px solid ${BG_PANEL}`, padding: "8px 2px", margin: "2px 0 6px", cursor: "pointer", fontFamily: "inherit" }}>
+    <span style={{ fontSize: 13, color: TEAL, display: "inline-block", transition: "transform 0.2s", transform: homeOpen[key] ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+    <span style={{ fontSize: "clamp(18px, 2.4vw, 21px)", fontWeight: 700, color: TEAL, letterSpacing: "-0.2px" }}>The default view: education policy scenario</span>
+    <span style={{ marginLeft: "auto", fontSize: 12.5, color: TEXT_MID, fontWeight: 500 }}>{homeOpen[key] ? "Hide" : "Show"}</span>
+  </button>
+  {homeOpen[key] && (<div id={`home-${key}`}>
+  <div style={{ background: `${AQUA}08`, border: `1px solid ${AQUA}20`, borderRadius: "8px", padding: isMobile ? "16px" : "18px", marginBottom: "18px", borderLeft: `4px solid ${AQUA}` }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "18px", alignItems: "flex-start", marginBottom: "10px" }}>
+  
+  {/* Left column: both paragraphs */}
+  <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+    <p style={{ margin: 0, lineHeight: 1.6, color: TEXT_MID, fontSize: "15.5px" }}>
+      The default view displays a pre-aggregated dataset showing a simulated education policy intervention applied to 16–29 year olds from 2025, compared against a <strong>Baseline</strong> with no policy change. The <strong>Moderate Education Scenario</strong> increases the proportion of 16–29 year olds in education by 5%.
+    </p>
+    <p style={{ margin: "16px 0 0", lineHeight: 1.6, color: TEXT_MID, fontSize: "15.5px" }}>
+      To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output. Use "Visualise Your Own Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
+      <br /><br />
+      This tool is entirely JavaScript-based — all aggregation happens locally in your browser, and no data you upload is ever stored or sent anywhere.
+    </p>
+  </div>
+
+  {/* Right column: graphic */}
+  <div style={{ flex: "1 1 340px", minWidth: 0 }}>
+    <ScenarioGraphic isMobile={isMobile || windowWidth < 1200} />
+  </div>
+
+</div>
+  </div>
+  </div>)}
+  </>);
+
+
+  // Fewest runs in any scenario (Baseline included) of the loaded data. Each
+  // scenario's run count is the largest n_runs among its rows (the Overall
+  // rows exist in every run). Drives the low-run warning above the charts.
+  const runsByScenario = useMemo(() => {
+    const m = new Map();
+    for (const r of parsedCache) {
+      if (r.n_runs > (m.get(r.scenario) ?? 0)) m.set(r.scenario, r.n_runs);
+    }
+    return m;
+  }, [parsedCache]);
+  const fewestRuns = runsByScenario.size ? Math.min(...runsByScenario.values()) : null;
   if (windowWidth < MIN_WIDTH) {
     return (
       <div style={{
@@ -265,7 +367,7 @@ function App() {
      {/* Header + Title Banner */}
 <div
   style={{
-    background: CORAL,
+    background: BG_DARK,          // header: light background, coral title (tabs below are coral)
     padding: isMobile ? "12px 16px" : "12px 48px",
     display: "flex",
     alignItems: "center",
@@ -275,7 +377,7 @@ function App() {
   {/* Main title */}
   <p
     style={{
-      color: "#faf7ef",
+      color: CORAL,
       margin: 0,
       fontSize: "clamp(20px, 4.5vw, 36px)",
       fontWeight: 600,
@@ -289,7 +391,7 @@ function App() {
       {/* Logos + SimPaths branding */}
       <div
         style={{
-          background: "#faf7ef",
+          background: "#fff",
           borderRadius: "10px",
           padding: isMobile ? "6px 8px" : "7px 12px",
           display: "flex",
@@ -347,11 +449,29 @@ function App() {
       </div>
     </div>
 
+      {/* ── Top navigation tabs ─────────────────────────────────────────── */}
+      <nav aria-label="Site sections" style={{ background: CORAL, marginTop: -30 }}>
+        <div role="tablist" style={{ display: "flex", alignItems: "center", gap: isMobile ? 2 : 6, padding: isMobile ? "7px 8px" : "7px 40px", overflowX: "auto", whiteSpace: "nowrap", scrollbarWidth: "thin" }}>
+          {TABS.map(t => {
+            const active = tab === t.id;
+            return (
+              <a key={t.id} role="tab" aria-selected={active} aria-current={active ? "page" : undefined}
+                href={`#/${t.id}`}
+                onClick={e => { e.preventDefault(); navigate(t.id); }}
+                style={{ display: "inline-block", padding: isMobile ? "6px 11px" : "6px 15px", borderRadius: 999, fontSize: isMobile ? 13 : 14, fontWeight: active ? 700 : 500, color: active ? CORAL : "rgba(255,255,255,0.92)", background: active ? "#fff" : "transparent", textDecoration: "none" }}>
+                {t.label}
+              </a>
+            );
+          })}
+        </div>
+      </nav>
+
       {/* Main Content Container */}
       <div style={{ padding: isMobile ? "10px 16px" : "10px 48px", display: "flex", flexDirection: "column", gap: isMobile ? 20 : 30 }}>
         
+       {tab === "home" && (<>
        {/* Intro Card */}
-<div style={{ background: BG_DARK, border: `0.5px solid ${BG_PANEL}`, borderRadius: "12px", padding: isMobile ? "22px 20px" : "32px 40px", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+<div style={{ background: BG_DARK, border: `0.5px solid ${BG_PANEL}`, borderRadius: "12px", padding: isMobile ? "22px 20px 10px" : "32px 40px 14px", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
 
   {/* Two-column row: text left, links right */}
   <div style={{ display: "flex", gap: "40px", alignItems: "flex-start", flexWrap: windowWidth < 900 ? "wrap" : "nowrap", marginBottom: "24px" }}>
@@ -376,66 +496,98 @@ function App() {
       </p>
     </div>
 
-    {/* Right: Learn More + More Resources */}
-    <div style={{ flexShrink: 0, width: windowWidth < 900 ? "100%" : "200px", display: "flex", flexDirection: "column", gap: "20px" }}>
-      <div>
-        <p style={{ margin: "0 0 8px", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, color: TEAL }}>Learn More</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          <a href="https://simpaths.org/getting-started/data/" target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>About the Dataset</a>
-          <a href={`${process.env.PUBLIC_URL}/interpreting-results.html`} target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>Interpreting the Results</a>
-          <a href={`${process.env.PUBLIC_URL}/citation.html`} target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>How Do I Cite This?</a>
-          <a href={`${process.env.PUBLIC_URL}/funders.html`} target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>Funders &amp; Partners</a>
-        </div>
-      </div>
-      <div>
-        <p style={{ margin: "0 0 8px", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, color: TEAL }}>More Resources</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-          <a href="https://simpaths.org/" target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>SimPaths Documentation</a>
-          <a href="https://github.com/rjgreen1029/SimPaths-Policy-Impacts-Visualiser" target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>GitHub Repository</a>
-          <a href="https://www.phiuk.org/policy-modelling-for-health" target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>Policy Modelling for Health</a>
-          <a href="https://youtu.be/fqfNmjTWUEA" target="_blank" rel="noopener noreferrer" style={smallLinkStyle}>SimPaths Webinar</a>
-        </div>
-      </div>
-    </div>
+
   </div>
 
-  {/* Getting Started — capped width so it doesn't span too wide */}
-  <div style={{ background: `${AQUA}08`, border: `1px solid ${AQUA}20`, borderRadius: "8px", padding: isMobile ? "16px" : "18px", marginBottom: "18px", borderLeft: `4px solid ${AQUA}` }}>
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "18px", alignItems: "flex-start", marginBottom: "10px" }}>
-  
-  {/* Left column: both paragraphs */}
-  <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-    <p style={{ margin: 0, lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
-      The default view displays a pre-aggregated dataset showing two simulated education policy interventions applied to 16–29 year olds in 2025, compared against a <strong>Baseline</strong> with no policy change. The <strong>Moderate Education Scenario</strong> increases the proportion of 16–29 year olds in education by 5%; the <strong>Low Education Scenario</strong> increases the proportion in education by 2%.
-    </p>
-    <p style={{ margin: "16px 0 0", lineHeight: 1.6, color: TEXT_MID, fontSize: "13.5px" }}>
-      To use your own data, SimPaths outputs must be organised into <strong>Baseline</strong> and <strong>Scenario</strong> folders, each containing the runs from your model output. Use "Visualise Your Own Data" to select the parent folder that your <strong>Baseline</strong> and <strong>Scenario</strong> folders sit within.
-      <br /><br />
-      This tool is entirely JavaScript-based — all aggregation happens locally in your browser, and no data you upload is ever stored or sent anywhere.
-    </p>
-  </div>
-
-  {/* Right column: graphic */}
-  <div style={{ flex: "1 1 340px", minWidth: 0 }}>
-    <ScenarioGraphic isMobile={isMobile || windowWidth < 1200} />
-  </div>
-
-</div>
-  </div>
+  {/* Default view (education scenario) — drop-down section */}
+  {renderDefaultViewSection("scenario")}
     
 
-  {/* Limitations — full width */}
+  {/* Limitations — drop-down section */}
+  <button type="button" onClick={() => toggleHomeSection("limits")} aria-expanded={!!homeOpen.limits} aria-controls="home-limits"
+    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", background: "none", border: "none", borderBottom: `1px solid ${BG_PANEL}`, padding: "8px 2px", margin: "2px 0 6px", cursor: "pointer", fontFamily: "inherit" }}>
+    <span style={{ fontSize: 13, color: TEAL, display: "inline-block", transition: "transform 0.2s", transform: homeOpen.limits ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+    <span style={{ fontSize: "clamp(18px, 2.4vw, 21px)", fontWeight: 700, color: TEAL, letterSpacing: "-0.2px" }}>Limitations &amp; interpretation</span>
+    <span style={{ marginLeft: "auto", fontSize: 12.5, color: TEXT_MID, fontWeight: 500 }}>{homeOpen.limits ? "Hide" : "Show"}</span>
+  </button>
+  {homeOpen.limits && (<div id="home-limits" style={{ marginBottom: 12 }}>
   <div id="interpreting-results" style={{ background: "#fff0ee", border: `1px solid #e07060`, borderRadius: "8px", padding: isMobile ? "14px 16px" : "16px 20px", borderLeft: `4px solid #d04030` }}>
-    <h4 style={{ margin: "0 0 6px", fontSize: "13px", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600, color: "#c03020" }}>Limitations &amp; Interpretation</h4>
-    <p style={{ margin: "0 0 8px", fontSize: "13px", color: "#c03020", lineHeight: 1.6 }}>
+    <p style={{ margin: "0 0 8px", fontSize: "15.5px", color: "#c03020", lineHeight: 1.65 }}>
       The outputs presented here are based on simulated data and are intended for research purposes only — they should not be interpreted as forecasts or official statistics.
     </p>
-    <p style={{ margin: 0, fontSize: "13px", color: "#c03020", lineHeight: 1.6 }}>
+    <p style={{ margin: 0, fontSize: "15.5px", color: "#c03020", lineHeight: 1.65 }}>
       Every figure is an average across multiple model runs, shown with a 95% confidence interval; where the underlying sample within a run is too small to be reliable, that estimate is suppressed rather than shown. Differences between <strong>Baseline</strong> and <strong>Scenario</strong> reflect the modelled effect of the policy change being tested, not an observed real-world outcome.
     </p>
   </div>
+  </div>)}
 
 </div>
+
+        {/* ── Visualiser (same page, below the intro) ── */}
+        {/* Connect Data — full width, above the variable list and charts.
+            Row 1: heading + "Visualise Your Own Data" button + what's loaded.
+            Row 2: folder instructions and privacy note. */}
+        <div ref={connectDataRef} style={{ background: BG_DARK, border: `1px solid ${BG_PANEL}`, padding: isMobile ? 16 : "18px 24px", borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)", scrollMarginTop: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: isMobile ? "10px 14px" : "10px 20px", marginBottom: 10 }}>
+            <h3 style={{ margin: 0, fontSize: "clamp(17px, 2.2vw, 20px)", fontWeight: 700, color: TEAL, letterSpacing: "-0.2px", borderBottom: `3px solid ${CORAL}`, paddingBottom: 3 }}>
+              Connect Data
+            </h3>
+            <button onClick={handleSelectFolder} disabled={isProcessing} style={{ padding: "8px 18px", borderRadius: 6, border: `1px solid ${AQUA}`, background: AQUA, color: BG_DARK, fontWeight: 600, fontSize: 15, cursor: isProcessing ? "default" : "pointer", width: isMobile ? "100%" : "auto" }}>
+              {isProcessing ? "Aggregating data..." : "Visualise Your Own Data"}
+            </button>
+            <div style={{
+              fontSize: 12,
+              color: defaultLoadFailed ? "#b91c1c" : isUsingDefault ? TEXT_MID : "#166534",
+              padding: defaultLoadFailed || !isUsingDefault ? "3px 8px" : 0,
+              borderRadius: 4,
+              background: defaultLoadFailed ? "#fee2e2" : isUsingDefault ? "transparent" : "#dcfce7",
+              fontWeight: 500,
+              display: "inline-flex", alignItems: "center", gap: 10,
+            }}>
+              {defaultLoadFailed
+                ? "Preloaded data failed to load"
+                : isUsingDefault ? "Currently displaying: preloaded data" : "Currently displaying: user uploaded data"}
+              {defaultLoadFailed && (
+                <span style={{ cursor: "pointer", color: TEAL, fontWeight: "bold", textDecoration: "underline" }} onClick={loadDefaultDataset}>↻ Retry</span>
+              )}
+              {!isUsingDefault && (
+                <span title="Go back to the preloaded data" style={{ cursor: "pointer", color: "#b91c1c", fontWeight: "bold" }} onClick={loadDefaultDataset}>✕</span>
+              )}
+            </div>
+          </div>
+
+          <p style={{ margin: "0 0 4px", fontSize: 13, color: TEXT_DARK }}>
+            Select parent folder with runs organised into <strong>Baseline</strong> and <strong>Scenario</strong> subfolders.{" "}
+            <span style={{ position: "relative", display: "inline-block" }}
+              onMouseEnter={() => setShowFolderStructure(true)}
+              onMouseLeave={() => setShowFolderStructure(false)}>
+              <button type="button"
+                onFocus={() => setShowFolderStructure(true)} onBlur={() => setShowFolderStructure(false)}
+                style={{ background: "none", border: "none", padding: 0, color: "#2563eb", fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
+                View folder structure
+              </button>
+              {showFolderStructure && (
+                <span style={{ position: "absolute", left: 0, top: "calc(100% + 8px)", background: "#fff", border: "1px solid #ddd", borderRadius: "8px", padding: "12px 16px", boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)", zIndex: 100, minWidth: "280px", textAlign: "left" }}>
+                  <pre style={{ margin: 0, fontSize: "12px", lineHeight: 1.5, fontFamily: "monospace", color: "#333" }}>
+{`Your Data Folder/
+├── Baseline/
+│   ├── Run 1/
+│   ├── Run 2/
+│   └── Run 3/
+└── Scenario/
+    ├── Run 1/
+    ├── Run 2/
+    └── Run 3/`}
+                  </pre>
+                </span>
+              )}
+            </span>
+          </p>
+          <p style={{ margin: 0, fontSize: 11, color: TEAL, lineHeight: 1.5, fontStyle: "italic" }}>
+            Nothing you select is uploaded or stored anywhere — all aggregation happens locally, in your browser.
+          </p>
+          {statusMessage && <p style={{ fontSize: 11, color: "#c2410c", margin: "6px 0 0", fontStyle: "italic", lineHeight: 1.4 }}>{statusMessage}</p>}
+        </div>
 
         {/* Workspace Operations */}
         <div style={{ display: "flex", gap: 30, alignItems: "flex-start", flexWrap: windowWidth < 1200 ? "wrap" : "nowrap" }}>
@@ -443,101 +595,6 @@ function App() {
           {/* Left Sidebar */}
           <div style={{ width: "300px", flexShrink: 0, display: "flex", flexDirection: "column", gap: 20, minWidth: windowWidth < 1200 ? "100%" : "300px" }}>
             
-            {/* Connect Data Card */}
-            <div style={{ background: BG_DARK, border: `1px solid ${BG_PANEL}`, padding: 20, borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-                            <div style={{ background: CORAL, borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
-                <h3 style={{ margin: 0, fontSize: 15, textTransform: "uppercase", letterSpacing: "0.05em", color: "#fff", fontWeight: 700 }}>Connect Data</h3>
-              </div>
-              <p style = {{margin: "0 0 8px", fontSize: 12, color: TEXT_DARK}}> Select parent folder with runs organised into <strong>Baseline</strong> and <strong>Scenario</strong> subfolders <span
-              style={{
-                position: "relative",
-                display: "inline-block",
-              }}
-              onMouseEnter={() => setShowFolderStructure(true)}
-              onMouseLeave={() => setShowFolderStructure(false)}
-            >
-              <button
-                type="button"
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  color: "#2563eb",
-                  fontSize: "13.5px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                View folder structure.
-              </button>
-
-              {showFolderStructure && (
-                <span
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    top: "calc(100% + 8px)",
-                    background: "#fff",
-                    border: "1px solid #ddd",
-                    borderRadius: "8px",
-                    padding: "12px 16px",
-                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
-                    zIndex: 100,
-                    minWidth: "280px",
-                    textAlign: "left",
-                  }}
-                >
-                  <pre
-                    style={{
-                      margin: 0,
-                      fontSize: "12px",
-                      lineHeight: 1.5,
-                      fontFamily: "monospace",
-                      color: "#333",
-                    }}
-                  >
-          {`Your Data Folder/
-          ├── Baseline/
-          │   ├── Run 1/
-          │   ├── Run 2/
-          │   └── Run 3/
-          └── Scenario/
-              ├── Run 1/
-              ├── Run 2/
-              └── Run 3/`}
-                  </pre>
-                </span>
-              )}
-            </span></p>
-              <p style={{ margin: "0 0 16px", fontSize: 11, color: TEAL, lineHeight: 1.5, fontStyle: "italic" }}>
-                Nothing you select is uploaded or stored anywhere — all aggregation happens locally, in your browser.
-              </p>
-              
-              <button onClick={handleSelectFolder} disabled={isProcessing} style={{margin: "0 0 10px", width: "100%", padding: "10px", borderRadius: 6, border: `1px solid ${AQUA}`, background: AQUA, color: BG_DARK, fontWeight: 600, fontSize: 16, textAlign: "center", cursor: "pointer" }}>
-                {isProcessing ? "Aggregating data..." : "Visualise Your Own Data"}
-              </button>
-            
-              {statusMessage && <p style={{ fontSize: 11, color: "#c2410c", margin: "8px 0 0", fontStyle: "italic", lineHeight: 1.4 }}>{statusMessage}</p>}
-              <div style={{
-                fontSize: 12,
-                color: defaultLoadFailed ? "#b91c1c" : isUsingDefault ? TEXT_MID : "#166534",
-                marginBottom: 0, padding: "2px 2px",
-                background: defaultLoadFailed ? "#fee2e2" : isUsingDefault ? BG_DARK : "#dcfce7",
-                borderRadius: 0, fontWeight: 500,
-              }}>
-                {defaultLoadFailed
-                  ? "Preloaded data failed to load"
-                  : isUsingDefault ? "Currently displaying: preloaded data" : "Currently displaying: user uploaded data"}
-                {defaultLoadFailed && (
-                  <span style={{ cursor: "pointer", float: "right", color: TEAL, fontWeight: "bold", textDecoration: "underline" }} onClick={loadDefaultDataset}>↻ Retry</span>
-                )}
-                {!isUsingDefault && (
-                  <span style={{ cursor: "pointer", float: "right", color: "#b91c1c", fontWeight: "bold" }} onClick={loadDefaultDataset}>✕</span>
-                )}
-              </div>
-            </div>
-
             {/* Explore Variables Card */}
             <div style={{ background: BG_DARK, border: `1px solid ${BG_PANEL}`, padding: "16px 20px", borderRadius: 12, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
               <div style={{ background: CORAL, borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
@@ -556,7 +613,7 @@ function App() {
                       <div style={{ paddingLeft: 4, marginBottom: 6 }}>
                         {vars.map(v => (
                           <button key={v} onClick={() => setActiveVariable(v)} style={{ display: "block", width: "100%", textAlign: "left", background: activeVariable === v ? `${CORAL}18` : "transparent", border: "none", fontSize: 13, padding: "6px 10px", borderRadius: 6, cursor: "pointer", marginBottom: 2, color: activeVariable === v ? CORAL : TEXT_MID, fontWeight: activeVariable === v ? 600 : 400, outline: "none" }}>
-                            {v}
+                            {titleCase(v)}
                           </button>
                         ))}
                       </div>
@@ -570,11 +627,11 @@ function App() {
           {/* Main Visualization */}
           <div ref={mainVizRef} style={{ flex: 1, background: BG_DARK, border: `1px solid ${BG_PANEL}`, borderRadius: 12, padding: isMobile ? "16px" : "30px", boxShadow: "0 1px 2px rgba(0,0,0,0.04)", minWidth: windowWidth < 1200 ? "100%" : "auto" }}>
             <div style={{ background: CORAL, borderRadius: 8, padding: isMobile ? "10px 14px" : "12px 20px", marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: "clamp(18px, 2.8vw, 22px)", color: "#fff", fontWeight: 800, letterSpacing: "-0.2px" }}>{activeVariable}</h2>
+              <h2 style={{ margin: 0, fontSize: "clamp(18px, 2.8vw, 22px)", color: "#fff", fontWeight: 800, letterSpacing: "-0.2px" }}>{titleCase(activeVariable)}</h2>
             </div>
             {VARIABLE_DESCRIPTIONS[activeVariable] && (
               <p style={{ margin: "0 0 6px", fontSize: "clamp(12px, 1.5vw, 13px)", color: TEXT_MID, fontStyle: "italic", lineHeight: 1.5 }}>
-                {VARIABLE_DESCRIPTIONS[activeVariable]}
+                {withBenefitUnitInfo(VARIABLE_DESCRIPTIONS[activeVariable])}
                   {activeVariable === "Mental Component Summary (MCS)" && (
     <>
       {" "}See{" "}
@@ -629,6 +686,61 @@ function App() {
       {" "}for further information.
     </>
   )}
+
+  {activeVariable === "Psychological distress score" && (
+    <>
+      {" "}See{" "}
+      <a
+        href="https://www.understandingsociety.ac.uk/documentation/mainstage/variables/scghq2_dv/"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          color: "#2563eb",
+          fontWeight: 600,
+          textDecoration: "underline",
+        }}
+      >
+       Understanding Society documentation
+      </a>
+      {" "}for further information.
+    </>
+  )}
+  {activeVariable === "Life Satisfaction Score" && (
+    <>
+      {" "}See{" "}
+      <a
+        href="https://www.understandingsociety.ac.uk/documentation/mainstage/variables/sclfsato/"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          color: "#2563eb",
+          fontWeight: 600,
+          textDecoration: "underline",
+        }}
+      >
+       Understanding Society documentation
+      </a>
+      {" "}for further information.
+    </>
+ )}
+    {activeVariable === "Financial distress flag" && (
+    <>
+      {" "}See{" "}
+      <a
+        href="https://www.understandingsociety.ac.uk/documentation/mainstage/variables/finnow/"
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          color: "#2563eb",
+          fontWeight: 600,
+          textDecoration: "underline",
+        }}
+      >
+       Understanding Society documentation
+      </a>
+      {" "}for further information.
+    </>
+  )}
   
 
   
@@ -637,6 +749,13 @@ function App() {
             <p style={{ margin: "0 0 20px", fontSize: "clamp(12px, 1.5vw, 13px)", color: "#64748b" }}>
               Side-by-side comparative graphics between the <strong>Baseline</strong> and the chosen <strong>Policy Scenario</strong> outputs.
             </p>
+            {fewestRuns != null && fewestRuns < MIN_RUNS_WARN && !isLoadingDefault && (
+              <div role="alert" style={{ margin: "0 0 16px", padding: "10px 14px", background: "#fffbeb", border: "1px solid #fcd34d", borderLeft: "4px solid #d97706", borderRadius: 8, fontSize: 13, color: "#92400e", lineHeight: 1.5 }}>
+                <strong>⚠ Low number of model runs.</strong>{" "}
+                {[...runsByScenario].filter(([, n]) => n < MIN_RUNS_WARN).map(([sc, n]) => `${scenarioLabel(sc)}: ${n} run${n === 1 ? "" : "s"}`).join(" · ")}.
+                {" "}With fewer than {MIN_RUNS_WARN} runs, the 95% uncertainty intervals (and Baseline → Scenario differences) are unreliable{fewestRuns === 1 ? " — with a single run there is no measure of uncertainty at all" : ""}. Interpret results with caution.
+              </div>
+            )}
             <hr style={{ border: "none", borderTop: `1px solid ${BG_PANEL}`, marginBottom: 20 }} />
             {isLoadingDefault
               ? <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:320,gap:20,padding:"40px 20px"}}>
@@ -651,6 +770,13 @@ function App() {
             }
           </div>
         </div>
+        </>)}
+
+        {tab === "dataset" && <DatasetPage onNavigate={navigate} />}
+        {tab === "interpreting-results" && <StaticPage file="interpreting-results.html" onNavigate={navigate} />}
+        {tab === "citation" && <StaticPage file="citation.html" onNavigate={navigate} />}
+        {tab === "funders" && <StaticPage file="funders.html" onNavigate={navigate} />}
+        {tab === "resources" && <ResourcesPage />}
       </div>
 
       {/* Closing Banner */}
@@ -682,16 +808,20 @@ function App() {
               We acknowledge the contributions of researchers, data providers, and funders supporting this work. Results are modelled estimates and should not be interpreted as forecasts or official statistics.
             </p>
 
+            <p style={{ color: "#fdfdfd", margin: "0 0 14px", fontSize: "11px", lineHeight: "1.6", opacity: 0.8, fontWeight: 400 }}>
+              The SimPaths Policy Impacts Visualiser is open-source software, licensed under the European Union Public Licence v. 1.2 (EUPL-1.2).
+            </p>
+
             {/* Links */}
             <div style={{ display: "flex", gap: "18px", flexWrap: "wrap" }}>
               <a href="https://github.com/simpaths/SimPaths/blob/main/license.txt" target="_blank" rel="noopener noreferrer" style={{ color: "#fdfdfd", fontSize: "12px", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", borderBottom: "1px solid rgba(255, 255, 255, 0.35)", paddingBottom: "2px", fontWeight: 400, opacity: 0.9 }}>
-                SimPaths License
+                License (EUPL-1.2)
               </a>
             </div>
           </div>
 
           {/* RIGHT: Feedback — prominent, replaces the old logo slot */}
-          <div style={{ width: windowWidth < 1024 ? "100%" : "300px", flexShrink: 0, background: "rgba(255, 255, 255, 0.14)", border: "1px solid rgba(255, 255, 255, 0.25)", borderRadius: "10px", padding: "18px 20px" }}>
+          <div style={{ width: windowWidth < 1024 ? "100%" : "300px", boxSizing: "border-box", flexShrink: 0, background: "rgba(255, 255, 255, 0.14)", border: "1px solid rgba(255, 255, 255, 0.25)", borderRadius: "10px", padding: "18px 20px" }}>
             <h3 style={{ margin: "0 0 6px", fontSize: "15px", fontWeight: 700, color: "#fdfdfd" }}>Feedback</h3>
             <p style={{ margin: "0 0 14px", fontSize: "13px", lineHeight: 1.5, color: "#fdfdfd", opacity: 0.9 }}>
               We're happy to receive feedback about the dashboard — let us know what's working, what isn't, or what you'd like to see.

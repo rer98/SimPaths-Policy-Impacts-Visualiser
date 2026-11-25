@@ -2,7 +2,9 @@
 
 An interactive React + D3 dashboard for exploring outputs from [SimPaths](https://simpaths.org/), a dynamic microsimulation model developed by the Centre for Microsimulation and Policy Analysis (CeMPA) at the University of Essex. The visualiser was built by researchers at the University of Glasgow as part of the [Policy Modelling for Health](https://www.phiuk.org/policy-modelling-for-health) research group.
 
-The dashboard compares a **Baseline** against one or more **Scenario** runs across demographic, employment, income, and health outcomes — as a time series, at a single year, or as the difference between the two — with all aggregation happening entirely client-side in the browser.
+The dashboard compares a **Baseline** against one or more **Scenario** runs across demographic, employment, income and health outcomes — over time, at a single year, or as the difference between the two. All aggregation of your own data happens in the browser.
+
+Licensed under the [European Union Public Licence v. 1.2](#licence) (EUPL-1.2).
 
 ---
 
@@ -12,232 +14,253 @@ The dashboard compares a **Baseline** against one or more **Scenario** runs acro
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
-- [Required public assets](#required-public-assets)
 - [Data inputs](#data-inputs)
   - [Default pre-aggregated dataset](#1-default-pre-aggregated-dataset)
-  - [Bring your own simulation output](#2-bring-your-own-simulation-output)
-- [How the aggregation pipeline works](#how-the-aggregation-pipeline-works)
+  - [Your own simulation output](#2-your-own-simulation-output)
+- [How the aggregation works](#how-the-aggregation-works)
+- [The R pre-aggregation script](#the-r-pre-aggregation-script)
 - [Dashboard views & controls](#dashboard-views--controls)
 - [Multi-scenario support](#multi-scenario-support)
 - [Colour system](#colour-system)
 - [Browser support](#browser-support)
 - [Privacy & data handling](#privacy--data-handling)
 - [Customising the dashboard](#customising-the-dashboard)
+- [Validation](#validation)
 - [Known limitations](#known-limitations)
 - [Credit & citation](#credit--citation)
+- [Licence](#licence)
 - [Feedback](#feedback)
 
 ---
 
 ## Features
 
-- Line, stacked-bar, grouped-bar, population pyramid, and wage-bin distribution charts rendered directly with D3 (no charting library dependency).
-- Three ways to view the data: time series, single cross-sectional year, and Baseline → Scenario deltas.
-- **Multi-scenario support**: compare Baseline against multiple named scenarios simultaneously; each scenario has a distinct colour and line/fill pattern throughout.
-- Stratify any variable by Age, Gender, Household Type, Disability Status, Region, Ethnicity, or Income Quintile — shown as small-multiple panels or combined onto one chart.
-- Click any year on a panel chart to see a cross-section view for that stratum.
-- 95% confidence intervals computed across model runs; estimates with small underlying samples are automatically suppressed.
-- Two data sources: a pre-packaged default dataset, or point the dashboard at your own local SimPaths output folder — no upload, no server round-trip.
-- Memory-lean serial parsing: each run is read, processed, and accumulated incrementally so large multi-run folders don't exhaust browser memory.
-- Export any chart panel as a PNG, or its underlying data as CSV.
-- Responsive layout from compact mobile up to wide desktop screens.
+- Line, stacked-bar, grouped-bar, population pyramid and hourly-earnings distribution charts, drawn directly with D3 (no charting library).
+- Over time, at a single year (or averaged across years), and Baseline → Scenario differences.
+- **Several scenarios at once**, each with its own line style and bar fill.
+- Stratify any variable by Age, Gender, Household Type, Disability Status, Region, Ethnicity or Income Quintile — as small-multiple panels or combined on one chart (each stratum gets its own marker shape).
+- 95% intervals across model runs; estimates with too small a sample are hidden, and a "⚠ Values for groups < 20 hidden" note appears on any chart affected.
+- **Full screen** for every chart, with larger text.
+- Drag up or down on a line chart to zoom its y-axis; drag on the population pyramid to zoom into an age range.
+- Population pyramid by single year of age (0–99, 100+); **Population size** (number of simulated people) as its own variable.
+- Two data sources: the bundled default dataset, or your own local SimPaths output folder — nothing is uploaded.
+- Export any chart as PNG and its data as CSV.
+- Plain-language help: a "Key terms" section on the Dataset tab, and an ⓘ next to "benefit unit" in variable descriptions.
+- Responsive layout from mobile to wide desktop screens.
 
 ## Tech stack
 
-- **React** (function components + hooks) for the UI
-- **D3.js** for data-side aggregation and chart rendering (raw SVG — no charting library)
-- **File System Access API** (`window.showDirectoryPicker`) for reading local simulation output folders without file-by-file upload
+- **React** (Create React App, function components + hooks)
+- **D3.js** for aggregation helpers and SVG chart rendering
+- **File System Access API** (`window.showDirectoryPicker`) to read local simulation folders
 
-No backend required. This is a fully static, client-side application.
+No backend: a fully static, client-side app (deployed to GitHub Pages — see `homepage` in `package.json`).
 
 ## Project structure
 
 ```
 src/
-├── index.js               # React entry point — mounts App inside PasscodeGate
-├── App.js                 # Page shell: header, intro card, sidebar, main viz, footer
-├── DashboardSection.js    # All D3 chart rendering + view/filter/scenario controls
-├── useAggregatedData.js   # Variable/stratifier definitions, colour engine,
-│                          #   CSV row parser, data hooks
+├── index.js               # React entry point — mounts <App> inside <PasscodeGate>
+├── PasscodeGate.js        # Access gate (git-ignored — see note below)
+├── App.js                 # Page shell: header, tabs, intro, Connect Data, sidebar, footer
+├── DashboardSection.js    # All charts + their controls (stratify, chart type, layout, view, filters)
+├── useAggregatedData.js   # Variable/stratifier definitions, colours, CSV row parser, data hooks
 ├── parseCore.js           # Pure parsing + aggregation logic (no browser APIs)
-│                          #   Incremental accumulator API:
-│                          #   createGroupedAccumulator / accumulateRunMetrics /
-│                          #   finaliseAggregation
-├── localFolderParser.js   # Directory discovery + serial run processing
-└── parseWorker.js         # Web Worker: processes a pre-read batch of runs
+├── localFolderParser.js   # "Visualise Your Own Data": finds runs, processes them one at a time
+├── StaticPage.js          # Shows the public/*.html pages inside an app tab
+├── InfoPages.js           # Dataset (incl. Key terms) and More Resources tabs
+├── ScenarioGraphic.js     # Diagram of the default education scenario
+├── reportWebVitals.js     # Create React App performance hook (imported by index.js)
+└── index.css              # Global styles
 
 public/
-├── SimPaths_All_Aggregated_Outputs.csv   # Default pre-aggregated dataset
-├── pmh_logo.png                          # PHI UK / Policy Modelling for Health logo (funders page)
-├── UKRILogo.png                          # UKRI logo (funders page, footer)
-├── SimPaths-logo-transparent.png         # SimPaths logo (header, funders page)
-├── interpreting-results.html             # In-app guidance page
-├── citation.html                         # Citation information
-├── funders.html                          # Funders & partners page
-└── bottom_banner_image.png               # Optional footer logo
+├── SimPaths_All_Aggregated_Outputs.csv   # Default pre-aggregated dataset (loaded on start-up)
+├── interpreting-results.html             # Interpreting Results tab (also works standalone)
+├── citation.html                         # Citation tab
+├── funders.html                          # Funders & Partners tab
+├── SimPaths-logo-transparent.png         # Header logo
+├── pmh_logo.png, UKRILogo.png            # Funders page logos
+└── index.html, manifest.json, favicon.ico, logo192.png, logo512.png, robots.txt
+
+docs/aggregation-spec.md   # Exact aggregation rules shared by the dashboard and the R script
+validation/                # Fake-data tests that the dashboard and R script agree (see below)
+validation/r/              # R aggregation script versions (latest: SimPathsAggFaster_v19.Rmd)
+LICENSE                    # EUPL-1.2 licence text
 ```
 
-`parseCore.js` is imported by both `localFolderParser.js` (main-thread path) and `parseWorker.js` (Worker path), so all CSV join/rename/aggregation logic lives in exactly one place.
+> **Note — `PasscodeGate.js`.** `src/index.js` imports `./PasscodeGate`, but `src/PasscodeGate.js` is listed in `.gitignore`. A fresh clone will not build until that file exists. Either commit it, or add a stand-in that just renders its children:
+> ```js
+> export default function PasscodeGate({ children }) { return children; }
+> ```
 
 ## Getting started
 
 ```bash
 npm install
 npm start        # development server at http://localhost:3000
-npm run build    # production build to /build
+npm run build    # production build in /build
 ```
 
-The default dataset (`public/SimPaths_All_Aggregated_Outputs.csv`) is loaded automatically on startup.
-
-## Required public assets
-
-| File | Purpose |
-|---|---|
-| `public/SimPaths_All_Aggregated_Outputs.csv` | Default pre-aggregated dataset |
-| `public/pmh_logo.png` | Logo shown in the header and footer |
-| `public/Interpreting-results.html` | Guidance page linked from the intro card |
-| `public/citation.html` | Citation page linked from the intro card |
+The default dataset (`public/SimPaths_All_Aggregated_Outputs.csv`) loads automatically. The default view shows the **Baseline** and the **Moderate Education** scenario (+5% of 16–29 year olds in education from 2025). Every scenario in the CSV is shown, so the CSV should contain only those two.
 
 ## Data inputs
 
 ### 1. Default pre-aggregated dataset
 
-Parsed by `parseCsvRow()` in `useAggregatedData.js`. Expected columns:
+Produced by the [R pre-aggregation script](#the-r-pre-aggregation-script) and read by `parseCsvRow()` in `useAggregatedData.js`. Columns:
 
 | Column | Meaning |
 |---|---|
 | `Year` | Simulation year |
-| `scenario` | `baseline`, or any scenario name (lowercased) |
-| `module` | Domain grouping (Demographics / Activity status / Income / Health) |
-| `variable` | Variable name matching the dashboard's variable list |
-| `variable_value` | Category label (or `Continuous Mean` for numeric variables) |
-| `stratifier` | Stratifier name, or `Overall` |
-| `stratifier_value` | Stratum label, or `Overall` |
-| `metric_type` | `mean`, `share`, `wage_bin`, `income_bin`, or `pyramid_bin` |
-| `n_runs` | Number of model runs averaged |
-| `total_sample`, `min_sample`, `mean_sample` | Sample-size diagnostics |
-| `mean_value` | Cross-run mean |
-| `lower_ci` / `upper_ci` | 95% CI bounds |
-| `paired_mean_delta`, `paired_lower_ci`, `paired_upper_ci`, `paired_n_runs` | Paired delta stats (scenario rows only) |
+| `scenario` | `Baseline`, or a scenario name (read case-insensitively) |
+| `module` | Demographics / Activity status / Income / Health |
+| `variable` | Variable name (as in the sidebar, before Title Case display) |
+| `variable_value` | Category, band or single year of age — or `Continuous Mean` for numeric variables |
+| `stratifier`, `stratifier_value` | Stratifier and stratum, or `Overall` |
+| `metric_type` | `mean`, `share`, `wage_bin`, `income_bin` or `pyramid_bin` |
+| `n_runs` | Runs contributing to this estimate |
+| `total_sample`, `min_sample`, `mean_sample` | People behind the estimate: total, smallest and average per run |
+| `mean_value`, `sd_value` | Mean across runs and its standard deviation |
+| `ci_lower`, `ci_upper` | 95% interval |
+| `paired_n_runs`, `paired_mean_delta`, `paired_lower_ci`, `paired_upper_ci` | Baseline → Scenario difference from seed-matched runs (scenario rows only) |
 
-The recommended R aggregation script (`SimPathsAggFaster_v11.Rmd`) produces this format directly and discovers all non-Baseline subfolders automatically.
+### 2. Your own simulation output
 
-### 2. Bring your own simulation output
-
-Clicking "Visualise Your Own Data" opens a native folder picker. The parent folder must contain a `Baseline` subfolder and at least one scenario subfolder (any name):
+"Visualise Your Own Data" opens a folder picker. The folder you pick must contain a `Baseline` folder and at least one scenario folder:
 
 ```
 YourSimulationOutput/
 ├── Baseline/
 │   ├── run_606_…/
 │   │   └── csv/
-│   │       ├── …_person_….csv
-│   │       └── …_benefit_….csv
+│   │       ├── …Person….csv
+│   │       └── …BenefitUnit….csv
 │   └── run_607_…/
 ├── Scenario/              ← any name except "Baseline"
-└── Scenario_Education/    ← multiple scenarios supported
+└── Scenario_Education/    ← several scenarios are supported
 ```
 
-Rules applied by `localFolderParser.js`:
+- One folder named `Baseline` (any case) is required; every other folder is a scenario, labelled from its folder name.
+- Run folders are paired between Baseline and scenarios by the seed in their name (e.g. `_606_`).
+- Person and benefit-unit CSVs are found by name (`person` / `benefit`), in the run folder or its `csv` subfolder.
+- Each person is joined to their benefit unit (by benefit-unit ID and year). Benefit-unit variables — income quintile, equivalised income, benefits, region, household type and `careProvidedFlag` — come from the benefit-unit file.
 
-- Exactly one folder named `Baseline` (case-insensitive) required at the top level.
-- Any other subfolder is treated as a named scenario; its folder name (lowercased, spaces → underscores) becomes the scenario label.
-- Run folders must contain a seed pattern like `_606_` in their name for pairing baseline and scenario runs.
-- Person and benefit CSV files are matched by substring (`"person"` / `"benefit"`, case-insensitive), either directly in the run folder or inside a `csv` subfolder.
+A **benefit unit** is a single adult or a couple, together with any dependent children they are responsible for — the unit used to assess benefit entitlement (it can be smaller than a household). Benefit-unit variables are given to every person in the unit, so their shares are shares of *people* (e.g. "people living in a benefit unit where someone provides care"). The definition shown in the app is `BENEFIT_UNIT_DEFINITION` in `InfoPages.js`.
 
-See `COLUMN_MAP` in `parseCore.js` for the full list of expected raw column names.
+`COLUMN_MAP` in `parseCore.js` lists every raw column used.
 
-## How the aggregation pipeline works
+## How the aggregation works
 
-1. **Discovery** — folder tree is scanned for `Baseline`/scenario subfolders and run folders.
-2. **Serial processing** — each run's CSVs are read on the main thread then immediately accumulated. Only one run's text lives in memory at a time.
-3. **Per-run aggregation** (`parseCore.js`) — CSVs are joined, column names mapped, and data reduced into weighted means/shares per year broken down by every stratifier.
-4. **Cross-run aggregation** (`finaliseAggregation`) — computes cross-run mean, SD, and 95% CI. A **paired delta** (Scenario − Baseline matched by seed) is computed for each scenario. See [Missing values and suppression](#missing-values-and-suppression) below.
+The rules are written out in full in [`docs/aggregation-spec.md`](docs/aggregation-spec.md). In short:
 
-### Missing values and suppression
+1. **Per run:** recode values (−9 → missing; codes → labels), then for every year and every group (Overall and each stratum) compute weighted means (numeric variables), shares (categorical variables, income/wage bands), shares of the whole population by single year of age and gender (pyramid), and the number of people (Population size).
+2. **Across runs:** mean of the run values, SD, and a 95% interval (mean ± 1.96 × SD / √runs; needs at least 2 runs).
+3. **Baseline → Scenario:** for each seed, scenario value − Baseline value; the mean of these and its 95% interval (needs at least 2 matched pairs).
 
-**Missing values (−9).** SimPaths codes missing values as `-9`. When reading your own simulation output, any cell equal to `-9` (or blank, `null`, `undefined`) is treated as missing, for every variable and every stratifier. Specifically:
+Runs are processed one at a time, so only one run's data is in memory at once.
 
-- **Continuous variables** (e.g. income, hourly earnings, health scores, hours worked): missing values are excluded from the weighted mean. They are never treated as 0. The share of missing values is reported in the chart tooltip (e.g. "X% missing") rather than plotted.
-- **Categorical variables** (e.g. employment status, disability): missing values are excluded from both the numerator and the denominator, so the shares of the valid categories sum to 100%. `-9` never appears as its own category.
-- **Distribution charts** (hourly earnings and income bins): missing values are not placed in any band (including £0) and are excluded from the denominator, so band percentages are percentages of people with a valid value.
-- **Stratifiers** (Age, Gender, Region, etc.): a person with a missing stratifier value is excluded from that breakdown (but still counted in the Overall figures). Missing values are dropped before any recoding, so, for example, a `-9` gender or age is never recoded into "Female" or "Under 18".
+### Missing values (−9)
 
-**Suppression.** An estimate is only shown if **every** run has at least 20 unweighted observations behind it (`MIN_RUN_SAMPLE` in `parseCore.js`). If any single run has fewer than 20 — including a run in which the group does not appear at all (0 observations) — the estimate, its 95% CI, and any Baseline → Scenario paired delta involving it are all suppressed. The threshold applies per run, not to the sample pooled across runs. Suppressed estimates appear as gaps in line charts, or as "Sample too small — suppressed" panels.
+- **Numeric variables:** −9 is left out of the mean (never treated as 0). The share missing is shown in tooltips, not plotted.
+- **Categorical variables and bands:** −9 is left out of both numerator and denominator, so valid categories add up to 100%.
+- **Stratifiers:** a person with a missing stratifier is left out of that breakdown, but still counted in Overall.
+
+### Hidden (suppressed) estimates
+
+An estimate is shown only if **every run** has at least **20 people** behind it (`MIN_RUN_SAMPLE` in `parseCore.js`). For a categorical share, that is the number of people *in that category*. A group missing from a run counts as 0. Otherwise the estimate, its interval and any difference involving it are hidden — shown as gaps or missing bars, with a "⚠ Values for groups < 20 hidden" note on the chart (hover it for the explanation). A panel whose values are all hidden says "Sample too small — suppressed".
+
+## The R pre-aggregation script
+
+`validation/r/SimPathsAggFaster_v19.Rmd` produces the default CSV from SimPaths output, with exactly the same rows and values as the dashboard's own aggregation (checked by the [validation](#validation) tests). Set `data_root` (the folder containing `Baseline` and scenario folders) and `OUTPUT_DIR` near the top, then knit or run it. It processes several runs at once — one per CPU core; lower `N_WORKERS` if memory runs short. Needs `data.table` and `future.apply`.
 
 ## Dashboard views & controls
 
-- **Stratify by** — Overall, Age, Gender, Household Type, Disability Status, Region, Ethnicity, or Income Quintile.
-- **Chart type** — Line or Stacked bar (categorical only).
-- **View** — Toggle Baseline and each Scenario on/off independently.
-- **Layout** — Panels (small multiples, one per stratum) or Combined. In panel view, click any year to see a cross-section for that stratum.
-- **Delta tab** — all enabled scenarios on one chart versus Baseline.
-- **Filters** — toggle variable values and stratum values; panels resize as strata are toggled.
-- **Highlighting** — click a legend entry to spotlight one series.
-- **Export** — PNG and CSV on every panel.
+The **Visualiser** tab holds the introduction (with "The default view" and "Limitations & interpretation" drop-downs), **Connect Data**, the variable list and the charts. Other tabs: Dataset, Interpreting Results, Citation, Funders & Partners, More Resources.
 
-Special views:
-- **Population Pyramid** — Age variable; all enabled scenarios with distinct fill patterns.
-- **Wage Distribution** — Hourly Earnings; within-scenario earnings distribution.
+- **Stratify by** — Overall or a stratifier (a variable can't be stratified by itself).
+- **Chart type** — Line, Stacked (categorical variables), or Δ Baseline → Scenario.
+- **Layout** — Panels (one small chart per stratum) or Combined; shown under Chart type when it applies.
+- **View** — turn the Baseline and each scenario on/off; toggle 95% interval bands.
+- **Filter / Highlight** — show or emphasise particular categories and strata.
+- **Cross-section** — next to (or under) the line chart: values averaged across years, or for a year you click.
+- **Δ Baseline → Scenario** — all enabled scenarios on one chart; click a year for that year's values.
+- **Population Pyramid** — single years of age; drag up/down to zoom into an age range.
+- **Hourly Earnings** — also as a binned distribution.
+- Every chart has **⤢ Full screen**, **↓ PNG** and **↓ CSV**.
 
 ## Multi-scenario support
 
-Any number of named scenarios are supported alongside Baseline:
-
-- **Line style**: Scenario 1 = dotted (`2,2`), Scenario 2 = dashed (`6,4`). Defined in `SCENARIO_DASHES` in `DashboardSection.js`.
-- **Bar fill**: Scenario 1 = dot pattern, Scenario 2 = diagonal hatch.
-- **Colours**: for numeric/continuous variables, Baseline = dark grey (`#586369`), scenarios = teal (`#0f93a1`), distinguished by line/fill style. For categorical/ordinal variables, colour encodes the variable value.
-- **Colour identity**: scenario colours and styles are assigned by global index so toggling one scenario off does not reassign another's appearance.
-- **Delta plots**: all enabled scenarios on one chart.
+- **Line style:** scenario 1 dotted, scenario 2 dashed, further scenarios other patterns (`SCENARIO_DASHES` in `DashboardSection.js`).
+- **Bar fill:** scenario 1 dots, other scenarios hatching; the Baseline is solid.
+- **Colours:** numeric variables use dark grey (Baseline) and teal (scenarios); categorical variables are coloured by category.
+- A scenario keeps its style when others are switched off.
 
 ## Colour system
 
-All colours are defined in `useAggregatedData.js` (`buildColourMap()`).
+Colours are defined in `useAggregatedData.js` (`buildColourMap()`):
 
-- **Numeric variables** — Baseline: dark grey; scenarios: teal (distinguished by line/fill style).
-- **Binary variables** — fixed coral/teal pair.
-- **Ordinal variables** — purpose-built diverging or sequential ramps.
-- **Categorical variables** — 10-colour, colourblind-friendly qualitative palette (`BRAND_QUAL`).
-- **Muted grey** (`GREY`) for dimmed/unhighlighted series.
+- **Numeric variables** — Baseline dark grey, scenarios teal (told apart by line/fill style).
+- **Highest Level of Education** — In Education warm grey; Low → Medium → High from light blue to dark navy.
+- **Ordinal variables** — sequential ramps; **categorical variables** — a colour-blind-friendly qualitative palette (`BRAND_QUAL`).
+- **Backgrounds** — page `#f7f3ed`, cards `#fcfaf5`, chart cards `BG_CARD_LIGHT` in `DashboardSection.js`.
 
 ## Browser support
 
-- Default dataset works in any modern browser.
-- "Visualise Your Own Data" requires the File System Access API — supported in Chromium-based browsers (Chrome, Edge, Arc, etc.).
-- Screens narrower than 320px show a "screen too small" message.
+- The default dataset works in any modern browser.
+- "Visualise Your Own Data" needs the File System Access API — Chromium-based browsers (Chrome, Edge, Arc, …).
+- Screens narrower than 320 px show a "screen too small" message.
 
 ## Privacy & data handling
 
-Everything runs locally in the browser. Nothing you select via "Visualise Your Own Data" is uploaded, stored, or transmitted anywhere.
+Everything runs in your browser. Nothing selected with "Visualise Your Own Data" is uploaded, stored or sent anywhere.
 
 ## Customising the dashboard
 
 | What | Where |
 |---|---|
-| Variables & domains shown in sidebar | `DOMAIN_SECTIONS`, `VARIABLE_DESCRIPTIONS` in `App.js` |
-| Variables tagged as "Benefit unit" source | `BENEFIT_UNIT_VARS` in `App.js` |
-| Variable/stratifier ordering & types | `VARIABLE_DEFS` / `STRATIFIER_DEFS` in `useAggregatedData.js` |
-| Colours | `BRAND_QUAL`, `SEQ_*`, `DIV_RED_TEAL` etc. in `useAggregatedData.js` |
-| Scenario line styles | `SCENARIO_DASHES` in `DashboardSection.js` |
-| Scenario colours (numeric variables) | `NUMERIC_BASE_COLOUR`, `NUMERIC_SCEN_COLOURS` in `DashboardSection.js` |
-| Raw CSV → display-name mapping | `COLUMN_MAP` in `parseCore.js` |
-| Suppression threshold | `MIN_RUN_SAMPLE` (per-run minimum, default 20) in `parseCore.js` |
-| Default dataset description in intro card | Edit the Getting Started section in `App.js` |
+| Variables and domains in the sidebar; their descriptions | `DOMAIN_SECTIONS`, `VARIABLE_DESCRIPTIONS` in `App.js` |
+| Raw column → variable name | `COLUMN_MAP` in `parseCore.js` (and in the R script) |
+| Category labels (e.g. Received care 0–3) | `*_MAP` constants in `parseCore.js` (and in the R script) |
+| Category / stratum order and variable types | `VARIABLE_DEFS`, `STRATIFIER_DEFS` in `useAggregatedData.js` |
+| Colours | `useAggregatedData.js` (`BRAND_QUAL`, `INDIGO_EDU`, `SEQ_*`, …) |
+| Minimum sample per run | `MIN_RUN_SAMPLE` in `parseCore.js` (and the R script) |
+| Low-run warning threshold | `MIN_RUNS_WARN` in `DashboardSection.js` |
+| Oldest single year in the pyramid | `PYRAMID_TOP_AGE` in `parseCore.js` (and the R script) |
+| Full-screen line-chart shape / text size | `FS_LINE_ASPECT`, `FS_TEXT_SCALE` in `DashboardSection.js` |
+| Default view text | `renderDefaultViewSection` in `App.js`; `ScenarioGraphic.js`; `InfoPages.js` |
+| Benefit unit definition (Key terms and ⓘ popup) | `BENEFIT_UNIT_DEFINITION` in `InfoPages.js` |
+| Tab pages | `public/interpreting-results.html`, `citation.html`, `funders.html` |
+
+If you change an aggregation rule, change it in both `parseCore.js` and the R script, update `docs/aggregation-spec.md`, and re-run the validation.
+
+## Validation
+
+`validation/` contains a fake SimPaths dataset generator with known edge cases (−9 codes, groups below the threshold, 1-run scenarios, ages 100+, benefit-unit variables), an independent reference implementation of the spec, and scripts that run the dashboard's real aggregation code and the R script on it and compare the results. See [`validation/README.md`](validation/README.md).
 
 ## Known limitations
 
-- Outputs are simulated data for research purposes only — not forecasts or official statistics.
-- Every figure is a cross-run mean with a 95% CI; estimates are suppressed unless every run has at least 20 observations behind them.
-- A 95% interval needs at least 2 runs (or 2 matched Baseline/Scenario pairs for differences). With a single run the estimate is still shown, but no interval is drawn and the tooltip says so.
-- With fewer than 5 runs in any scenario, a warning is shown above the charts and on every affected tooltip (`MIN_RUNS_WARN` in `DashboardSection.js`): uncertainty intervals from so few runs are unreliable.
-- `-9` is treated as missing everywhere; if any variable uses `-9` as a genuine value, it will be wrongly excluded.
-- Baseline → Scenario differences reflect the modelled policy effect, not an observed real-world outcome.
-- "Visualise Your Own Data" requires a Chromium-based browser.
+- Outputs are simulated, for research purposes — not forecasts or official statistics.
+- Estimates are hidden unless every run has at least 20 people behind them.
+- A 95% interval needs at least 2 runs (or 2 matched pairs for differences); with fewer than 5 runs a warning is shown (`MIN_RUNS_WARN`).
+- −9 is treated as missing everywhere; a variable that uses −9 as a real value would be wrongly excluded.
+- Benefit-unit variables (including Provided care and Income Quintile) are given to every person in the benefit unit, so their shares are shares of people, not of benefit units — e.g. income quintiles are not 20% each when counted by person.
+- Baseline → Scenario differences are modelled policy effects, not observed outcomes.
+- "Visualise Your Own Data" needs a Chromium-based browser.
 
 ## Credit & citation
 
-This tool visualises outputs from the SimPaths microsimulation model. See the in-app Credit & Citation section for DOI and citation details.
+This tool visualises outputs from the SimPaths microsimulation model, using data from Understanding Society: the UK Household Longitudinal Study. See the Citation tab in the app for how to cite it.
+
+## Licence
+
+This software is licensed under the **European Union Public Licence v. 1.2 (EUPL-1.2)**. You may not use this work except in compliance with the Licence. You may obtain a copy of the Licence at:
+
+<https://eur-lex.europa.eu/eli/dec_impl/2017/863/oj>
+
+Unless required by applicable law or agreed to in writing, software distributed under the Licence is distributed on an "AS IS" basis, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the Licence for the specific language governing permissions and limitations under the Licence.
+
+The full licence text is in [`LICENSE`](LICENSE). SimPaths itself is distributed under its own licence — see the [SimPaths repository](https://github.com/simpaths/SimPaths/blob/main/license.txt).
 
 ## Feedback
 
-Bug reports, feature requests, and general feedback — use the Feedback button in the app, or email [healthmod@glasgow.ac.uk](mailto:healthmod@glasgow.ac.uk?subject=SimPaths%20Policy%20Impacts%20Visualiser).
+Use the Feedback button in the app, or email [healthmod@glasgow.ac.uk](mailto:healthmod@glasgow.ac.uk?subject=SimPaths%20Policy%20Impacts%20Visualiser).
