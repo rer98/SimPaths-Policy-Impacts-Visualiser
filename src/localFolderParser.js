@@ -66,17 +66,32 @@ export async function parseLocalFolder(directoryHandle, onProgress) {
   let processed = 0;
   const warnings = [];
 
+  // Timing, to see where the time goes on a given machine: shown in the
+  // progress message, and a per-run table is printed to the browser console
+  // (F12 → Console) when loading finishes.
+  const tStart = performance.now();
+  const timings = [];
+  const secs = ms => Math.round(ms / 100) / 10;
+
   for (const job of runJobs) {
+    const t0 = performance.now();
+    let tFind = 0, tProcess = 0, tAccumulate = 0;
     try {
       const { personEntry, benefitText } = await locateRunFiles(job);
+      const t1 = performance.now(); tFind = t1 - t0;
       const metrics = await processRunFiles(personEntry, benefitText, job.scenarioName, job.runId);
+      const t2 = performance.now(); tProcess = t2 - t1;
       accumulateRunMetrics(grouped, metrics);
+      tAccumulate = performance.now() - t2;
       processed++;
     } catch (e) {
       warnings.push(`${job.scenarioName}/${job.runId}: ${e.message}`);
     }
+    timings.push({ scenario: job.scenarioName, run: job.runId,
+      "find + read benefit file (s)": secs(tFind), "read + aggregate person file (s)": secs(tProcess),
+      "combine (s)": secs(tAccumulate), "total (s)": secs(performance.now() - t0) });
     done++;
-    if (done % 2 === 0 || done === total) onProgress(`Aggregating… ${done}/${total} runs`);
+    onProgress(`Aggregating… ${done}/${total} runs (${secs(performance.now() - tStart)} s so far)`);
   }
 
   if (warnings.length) {
@@ -88,7 +103,12 @@ export async function parseLocalFolder(directoryHandle, onProgress) {
 
   if (!grouped.size) throw new Error("No usable data rows after aggregation.");
   onProgress("Computing confidence intervals…");
-  return finaliseAggregation(grouped);
+  const tFinal = performance.now();
+  const result = finaliseAggregation(grouped);
+  console.info(`SimPaths aggregation: ${processed} run(s) in ${secs(performance.now() - tStart)} s ` +
+    `(confidence intervals ${secs(performance.now() - tFinal)} s, ${result.length} output rows)`);
+  console.table(timings);
+  return result;
 }
 
 async function locateRunFiles({ runEntry }) {

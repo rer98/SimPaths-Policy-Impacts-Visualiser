@@ -3,6 +3,7 @@
   "name": "dashboard_june2",
   "version": "0.1.0",
   "private": true,
+  "license": "EUPL-1.2",
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",

@@ -13,17 +13,13 @@ jest.mock("./DashboardSection", () => () => <div data-testid="charts" />);
 beforeEach(() => d3.text.mockImplementation(() => new Promise(() => {})));
 afterEach(() => { delete window.showDirectoryPicker; jest.restoreAllMocks(); });
 
-test("folder help sits after the layout explanation in Getting Started, before selection instructions", () => {
+test("the folder picker explains its expected layout and provides accessible help", () => {
   render(<App />);
-  const gettingStarted = screen.getByRole("heading", { name: "Getting Started" }).parentElement;
-  const help = within(gettingStarted).getByRole("button", { name: "View folder structure" });
-  expect(help.closest("p").textContent).toMatch(/runs from your model output\. View folder structure Use/);
-  expect(help.closest("p").textContent).toMatch(/View folder structure Use "Visualise/);
-  expect(screen.getAllByRole("button", { name: "View folder structure" })).toHaveLength(1);
-  const connect = screen.getByRole("heading", { name: "Connect Data" }).parentElement.parentElement;
-  expect(within(connect).queryByRole("button", { name: "View folder structure" })).toBeNull();
+  const connect = screen.getByRole("heading", {name: "Connect Data"}).parentElement.parentElement;
+  const help = within(connect).getByRole("button", {name: "View folder structure"});
+  expect(help.closest("p")).toHaveTextContent("Baseline and Scenario subfolders");
   fireEvent.focus(help);
-  expect(within(gettingStarted).getByRole("tooltip")).toHaveTextContent("Baseline/");
+  expect(within(connect).getByRole("tooltip")).toHaveTextContent("Baseline/");
 });
 
 test("cancelling folder selection retains the current page and its source controls", async () => {

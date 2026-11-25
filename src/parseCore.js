@@ -32,6 +32,13 @@
 import { csvParse } from "./csvParse.js";
 
 // ─── Binning helpers ──────────────────────────────────────────────────────────
+/** Population pyramid: single years of age, with ages PYRAMID_TOP_AGE and over
+ *  grouped together (very old single years have too few people to show). */
+export const PYRAMID_TOP_AGE = 100;
+export function pyramidAge(age) {
+  if (age == null || isNaN(age) || age < 0) return null;
+  return age >= PYRAMID_TOP_AGE ? `${PYRAMID_TOP_AGE}+` : String(Math.floor(age));
+}
 export function binAge(v) {
   const n=+v; if(isNaN(n)) return null;
   if(n<=18) return "Under 18"; if(n<=24) return "18-24"; if(n<=34) return "25-34";
@@ -113,8 +120,10 @@ export const REGION_MAP = {
 };
 export const DISABILITY_MAP      = {"false":"No disability","0":"No disability","true":"Has disability","1":"Has disability"};
 export const FINANCIAL_MAP       = {"false":"Not financially distressed","0":"Not financially distressed","true":"Financially distressed","1":"Financially distressed"};
-export const SOCIAL_CARE_MAP     = {"false":"Does not need social care","0":"Does not need social care","true":"Needs social care","1":"Needs social care"};
-export const PROV_SOCIAL_CARE_MAP= {"false":"Does not provide social care","0":"Does not provide social care","true":"Provides social care","1":"Provides social care"};
+// Received care is coded 0–3 (none / informal / mixed / formal). "false" is
+// accepted as "None" in case an older output writes it as a plain flag.
+export const RECV_SOCIAL_CARE_MAP= {"0":"None","false":"None","1":"Informal","2":"Mixed","3":"Formal"};
+export const PROV_SOCIAL_CARE_MAP= {"false":"Does not provide care","0":"Does not provide care","true":"Provides care","1":"Provides care"};
 export const UC_BENEFITS_MAP     = {"false":"No benefits received","true":"Benefits received"};
 export const EMPLOYMENT_MAP      = {
   // SimPaths Java enum values (spaces/hyphens/underscores stripped by recode step)
@@ -164,7 +173,12 @@ export const COLUMN_MAP = {
   "healthPsyDstrss0to12":"Psychological distress score",
   "healthMentalMcs":"Mental Component Summary (MCS)","healthPhysicalPcs":"Physical Component Summary (PCS)",
   "healthSelfRated":"Self-Rated Health","demLifeSatScore0to10":"Life Satisfaction Score",
-  "healthWbScore0to36":"Subjective wellbeing (GHQ)","careNeedFlag":"Need of social care",
+  "healthWbScore0to36":"Subjective wellbeing (GHQ)",
+  // Care provided (benefit-unit flag) and care received (0–3: none / informal / mixed / formal).
+  // SimPaths spells the received flag "careReceivedFlag"; "careRecievedFlag" is accepted too.
+  "careProvidedFlag":"Provided care",
+  "careReceivedFlag":"Received care",
+  "careRecievedFlag":"Received care",
 };
 
 export const MODULE_MAP = {
@@ -180,8 +194,9 @@ export const MODULE_MAP = {
   "Disability Status":"Health","Self-Rated Health":"Health",
   "Psychological distress score":"Health","Mental Component Summary (MCS)":"Health",
   "Physical Component Summary (PCS)":"Health","Life Satisfaction Score":"Health",
-  "Subjective wellbeing (GHQ)":"Health","Need of social care":"Health",
-  "Provided social care":"Health",
+  "Subjective wellbeing (GHQ)":"Health",
+  "Provided care":"Health","Received care":"Health",
+  "Population size":"Demographics",
 };//"Number of children":"Demographics",
 
 export const NUMERIC_VARS = new Set([
@@ -218,9 +233,24 @@ export const ALL_DISPLAY_VARS = [
 // Replaces the previous isValid() which called String() on every value.
 // The hot path (non-null, non-empty string from a CSV cell) exits after
 // one null check + a length check — no string allocation needed.
+// SimPaths uses -9 as its missing-value code. Any cell equal to -9 is
+// treated exactly like a blank cell, for every variable and stratifier.
+// Fast path: only strings that start with "-" (or a space) can be −9, so
+// everything else is rejected without converting it to a number. This runs
+// for every cell, so it needs to be cheap.
+export function isMissingCode(val) {
+  if (typeof val === "number") return val === -9;
+  if (typeof val !== "string" || val.length === 0) return false;
+  const c = val.charCodeAt(0);
+  if (c !== 45 /* - */ && c !== 32 /* space */) return false;
+  return val === "-9" || +val === -9;
+}
 function notMissing(val) {
   if (val == null) return false;
   if (val === "") return false;
+  // −9 has already been removed when each row was read (see the row builders),
+  // so only the exact string needs checking here.
+  if (val === "-9") return false;
   // only allocate a string comparison for the rare sentinel values
   if (val === "null" || val === "undefined") return false;
   return true;
@@ -298,7 +328,48 @@ const PERSON_WANT = new Set([
   ...Object.keys(COLUMN_MAP),
   "time","Time","Year","idBu","idbu","id_BenefitUnit","wgt","Wgt",
 ]);
-const PERSON_ONLY_KEYS = new Set(["yBenUCReceivedFlag","demNChild","demAge","demMaleFlag","demEthnC6","healthDsblLongtermFlag","demPartnerStatus","labC4","labHrsWorkWeek","labWageFullTimeHrly","labWageHrly","healthPsyDstrssFlag","healthPsyDstrss0to12","healthMentalMcs","healthSelfRated","healthPhysicalPcs","demLifeSatScore0to10","healthWbScore0to36","careNeedFlag","eduHighestC4","careProvidedFlag","yBenUCReceivedFlag"]);
+// careProvidedFlag is NOT here: SimPaths writes it to BenefitUnit.csv, so the
+// benefit-unit value is used (and the person value only if the BU has none).
+const PERSON_ONLY_KEYS = new Set(["careReceivedFlag","careRecievedFlag","yBenUCReceivedFlag","demNChild","demAge","demMaleFlag","demEthnC6","healthDsblLongtermFlag","demPartnerStatus","labC4","labHrsWorkWeek","labWageFullTimeHrly","labWageHrly","healthPsyDstrssFlag","healthPsyDstrss0to12","healthMentalMcs","healthSelfRated","healthPhysicalPcs","demLifeSatScore0to10","healthWbScore0to36","eduHighestC4"]);
+
+// ─── Compact row values (memory) ──────────────────────────────────────────────
+// Every person-row of a run is held in memory until the run is aggregated, so
+// how each value is stored matters a lot for big runs:
+//   • numeric variables are stored as numbers (8 bytes) instead of strings;
+//   • everything else is "interned": all rows share ONE copy of each distinct
+//     string (e.g. "EmployedOrSelfEmployed"), instead of one copy per row.
+// Both also stop the row from pinning the whole CSV text chunk it was sliced
+// from. Values that don't parse as numbers are kept as-is, so results are
+// unchanged.
+const NUMERIC_COLUMNS = new Set([...NUMERIC_VARS, "Age", "Number of children"]);
+// Row objects: every row is a copy of one template with ALL fields already
+// present. Adding ~30 fields to an object one by one (by name) makes the
+// JavaScript engine switch it to a slow "dictionary" layout that takes roughly
+// 4–5× the memory; copying a template (made by JSON.parse, which builds the
+// compact layout) keeps every row compact. Missing values stay null.
+const ROW_FIELDS = [...new Set(Object.values(COLUMN_MAP))];
+const ROW_TEMPLATE = JSON.parse(JSON.stringify(
+  Object.fromEntries([["Year", 0], ["wgt", 0], ["AgeYears", null], ...ROW_FIELDS.map(f => [f, null])])
+));
+function newRow(year, wgt) {
+  const row = { ...ROW_TEMPLATE };
+  row.Year = year;
+  row.wgt = wgt;
+  return row;
+}
+
+function makeCompactor() {
+  const pool = new Map();
+  return (disp, val) => {
+    if (NUMERIC_COLUMNS.has(disp)) {
+      const n = +val;
+      if (!isNaN(n) && val.trim() !== "") return n;
+    }
+    let v = pool.get(val);
+    if (v === undefined) { v = (" " + val).slice(1); pool.set(v, v); }  // flat copy, not a slice of the chunk
+    return v;
+  };
+}
 
 function parsePersonCsv(text, benefitMap) {
   // Strip BOM if present (UTF-8 BOM = \uFEFF, sometimes added by Excel/R)
@@ -357,6 +428,7 @@ function parsePersonCsv(text, benefitMap) {
 
   const maxWantedPos = wantedPos.length ? Math.max(...wantedPos) : 0;
   const rows = [];
+  const compact = makeCompactor();
   let pos = firstNL + 1;
   const len = text.length;
 
@@ -384,7 +456,7 @@ function parsePersonCsv(text, benefitMap) {
           if (isNaN(wgt) || wgt <= 0) wgt = 1;
         }
 
-        const row = { Year: +yr, wgt };
+        const row = newRow(+yr, wgt);
 
         // Populate display-name fields — for PERSON_ONLY_KEYS read from
         // person cells only; for everything else prefer the benefit row value
@@ -400,9 +472,9 @@ function parsePersonCsv(text, benefitMap) {
             val = cellVal;
           } else {
             const bv = bRow[rawKey];
-            val = (bv !== undefined && bv !== "") ? bv : cellVal;
+            val = (bv !== undefined && bv !== "" && !isMissingCode(bv)) ? bv : cellVal;
           }
-          if (val !== undefined && val !== "") row[disp] = val;
+          if (val !== undefined && val !== "" && !isMissingCode(val)) row[disp] = compact(disp, val);
         }
 
         // Also pull benefit-only columns that aren't in the person file at all
@@ -410,21 +482,21 @@ function parsePersonCsv(text, benefitMap) {
         // the benefit-unit row and may have no person-side slot at all).
         if (bRow) {
           for (const [rawKey, disp] of colMapEntries) {
-            if (row[disp] === undefined) {
+            if (row[disp] == null) {
               const bv = bRow[rawKey];
-              if (bv !== undefined && bv !== "") row[disp] = bv;
+              if (bv !== undefined && bv !== "" && !isMissingCode(bv)) row[disp] = compact(disp, bv);
             }
           }
         }
 
         // ── Recode / bin ────────────────────────────────────────────────────
-        if (row["Age"]          != null) row["Age"]          = binAge(row["Age"]);
+        if (row["Age"]          != null) { row.AgeYears = +row["Age"]; row["Age"] = binAge(row["Age"]); }  // keep single year for the pyramid
         if (row["Number of children"] != null) row["Number of children"] = binChildren(row["Number of children"]);
         if (row["Region"]       != null) row["Region"]       = REGION_MAP[String(row["Region"])] ?? row["Region"];
         if (row["Disability Status"] != null) row["Disability Status"] = DISABILITY_MAP[String(row["Disability Status"]).toLowerCase()] ?? row["Disability Status"];
         if (row["Financial distress flag"] != null) row["Financial distress flag"] = FINANCIAL_MAP[String(row["Financial distress flag"]).toLowerCase()] ?? row["Financial distress flag"];
-        if (row["Need of social care"] != null) row["Need of social care"] = SOCIAL_CARE_MAP[String(row["Need of social care"]).toLowerCase()] ?? row["Need of social care"];
-        if (row["Provided social care"] != null) row["Provided social care"] = PROV_SOCIAL_CARE_MAP[String(row["Provided social care"]).toLowerCase()] ?? row["Provided social care"];
+        if (row["Provided care"] != null) row["Provided care"] = PROV_SOCIAL_CARE_MAP[String(row["Provided care"]).toLowerCase()] ?? row["Provided care"];
+        if (row["Received care"] != null) row["Received care"] = RECV_SOCIAL_CARE_MAP[String(row["Received care"]).toLowerCase()] ?? row["Received care"];
         if (row["Universal Credit Benefits Flag"] != null) row["Universal Credit Benefits Flag"] = UC_BENEFITS_MAP[String(row["Universal Credit Benefits Flag"]).toLowerCase()] ?? row["Universal Credit Benefits Flag"];
         if (row["Gender"] != null) {
           const g = String(row["Gender"]).toLowerCase();
@@ -453,6 +525,7 @@ export async function parsePersonCsvStream(personFileHandle, benefitMap) {
   const CHUNK = 32 * 1024 * 1024; // 32MB
   const decoder = new TextDecoder("utf-8");
   const rows = [];
+  const compact = makeCompactor();
 
   let leftover  = "";   // partial line carried from previous chunk
   let headers   = null; // set after first line
@@ -519,23 +592,23 @@ export async function parsePersonCsvStream(personFileHandle, benefitMap) {
       const bRow = (yr && buId) ? (benefitMap.get(`${yr}_${buId}`) || null) : null;
       let wgt = iWgt >= 0 ? +cells[wantedPos[iWgt]] : NaN;
       if (isNaN(wgt) || wgt <= 0) { wgt = bRow ? +(bRow.wgt || bRow.Wgt || 1) : 1; if (isNaN(wgt)||wgt<=0) wgt=1; }
-      const row = { Year: +yr, wgt };
+      const row = newRow(+yr, wgt);
       for (let i = 0; i < nWanted; i++) {
         const disp = slotDisplay[i]; if (disp===null) continue;
         const rawKey=wantedKey[i], cellVal=cells[wantedPos[i]];
         let val;
         if (PERSON_ONLY_KEYS.has(rawKey)||!bRow) { val=cellVal; }
-        else { const bv=bRow[rawKey]; val=(bv!==undefined&&bv!=="")?bv:cellVal; }
-        if (val!==undefined&&val!=="") row[disp]=val;
+        else { const bv=bRow[rawKey]; val=(bv!==undefined&&bv!==""&&!isMissingCode(bv))?bv:cellVal; }
+        if (val!==undefined&&val!==""&&!isMissingCode(val)) row[disp]=compact(disp,val);
       }
-      if (bRow) { for (const [rawKey,disp] of colMapEntries) { if (row[disp]===undefined) { const bv=bRow[rawKey]; if (bv!==undefined&&bv!=="") row[disp]=bv; } } }
-      if (row["Age"]!=null) row["Age"]=binAge(row["Age"]);
+      if (bRow) { for (const [rawKey,disp] of colMapEntries) { if (row[disp]==null) { const bv=bRow[rawKey]; if (bv!==undefined&&bv!==""&&!isMissingCode(bv)) row[disp]=compact(disp,bv); } } }
+      if (row["Age"]!=null) { row.AgeYears=+row["Age"]; row["Age"]=binAge(row["Age"]); }  // keep single year for the pyramid
       if (row["Number of children"]!=null) row["Number of children"]=binChildren(row["Number of children"]);
       if (row["Region"]!=null) row["Region"]=REGION_MAP[String(row["Region"])]??row["Region"];
       if (row["Disability Status"]!=null) row["Disability Status"]=DISABILITY_MAP[String(row["Disability Status"]).toLowerCase()]??row["Disability Status"];
       if (row["Financial distress flag"]!=null) row["Financial distress flag"]=FINANCIAL_MAP[String(row["Financial distress flag"]).toLowerCase()]??row["Financial distress flag"];
-      if (row["Need of social care"]!=null) row["Need of social care"]=SOCIAL_CARE_MAP[String(row["Need of social care"]).toLowerCase()]??row["Need of social care"];
-      if (row["Provided social care"]!=null) row["Provided social care"]=PROV_SOCIAL_CARE_MAP[String(row["Provided social care"]).toLowerCase()]??row["Provided social care"];
+      if (row["Provided care"]!=null) row["Provided care"]=PROV_SOCIAL_CARE_MAP[String(row["Provided care"]).toLowerCase()]??row["Provided care"];
+      if (row["Received care"]!=null) row["Received care"]=RECV_SOCIAL_CARE_MAP[String(row["Received care"]).toLowerCase()]??row["Received care"];
       if (row["Universal Credit Benefits Flag"]!=null) row["Universal Credit Benefits Flag"]=UC_BENEFITS_MAP[String(row["Universal Credit Benefits Flag"]).toLowerCase()]??row["Universal Credit Benefits Flag"];
       if (row["Gender"]!=null) { const g=String(row["Gender"]).toLowerCase(); row["Gender"]=(g==="1"||g==="true"||g==="male")?"Male":"Female"; }
       if (row["Employment status"]!=null) row["Employment status"]=EMPLOYMENT_MAP[String(row["Employment status"]).toLowerCase().replace(/[\s\-_]/g,"")]??row["Employment status"];
@@ -669,6 +742,12 @@ export function aggregateSingleRun(rows, scenario, runId) {
     const wageStratAcc = new Map(); // stratifier → stratVal → {totalW, bins: Map<binLabel,{sumW,n}>}
     let wageTotalW = 0, wageTotalN = 0, wageMissingN = 0;
 
+    // Population size: number of simulated people (sum of weights; weights are 1
+    // in SimPaths output), overall and in each stratifier group. Emitted as a
+    // numeric "mean" row so it uses the same charts, intervals and threshold.
+    let popW = 0, popN = 0;
+    const popStrat = new Map();   // stratifier → stratVal → {sumW, n}
+
     // Income-bin accumulators — same pattern as wage bins, one set per income variable
     const incomeBinVarNames = Object.keys(INCOME_BIN_VARS);
     const incBinAcc   = new Map(); // varName → Map<binLabel, {sumW,n}>
@@ -690,6 +769,18 @@ export function aggregateSingleRun(rows, scenario, runId) {
       for (let si = 0; si < nStrats; si++) {
         const rawSv = r[STRATIFIERS[si]];
         svKeys[si] = notMissing(rawSv) ? String(rawSv) : "Missing";
+      }
+
+      // Population size
+      popW += w; popN++;
+      for (let si = 0; si < nStrats; si++) {
+        const svKey = svKeys[si];
+        if (svKey === "Missing") continue;
+        let sMap = popStrat.get(STRATIFIERS[si]);
+        if (!sMap) { sMap = new Map(); popStrat.set(STRATIFIERS[si], sMap); }
+        let pa = sMap.get(svKey);
+        if (!pa) { pa = {sumW:0, n:0}; sMap.set(svKey, pa); }
+        pa.sumW += w; pa.n++;
       }
 
       // Numeric variables
@@ -833,6 +924,20 @@ export function aggregateSingleRun(rows, scenario, runId) {
       }
     }
 
+    // Emit population-size metrics
+    if (popN > 0) {
+      metrics.push({year,scenario,run:runId,variable:"Population size",
+        variable_value:"Continuous Mean",stratifier:"Overall",stratifier_value:"Overall",
+        metric_type:"mean",n:popN,metric_value:popW});
+    }
+    for (const [s, sMap] of popStrat) {
+      for (const [svKey, pa] of sMap) {
+        metrics.push({year,scenario,run:runId,variable:"Population size",
+          variable_value:"Continuous Mean",stratifier:s,stratifier_value:svKey,
+          metric_type:"mean",n:pa.n,metric_value:pa.sumW});
+      }
+    }
+
     // Emit categorical metrics
     for (const [v, acc] of catAcc) {
       for (const [vvKey, oa] of acc.cats) {
@@ -911,12 +1016,13 @@ export function aggregateSingleRun(rows, scenario, runId) {
     }
 
     // ── Population pyramid bins ───────────────────────────────────────────────
-    // Emit pyramid_bin rows: share of each age band within each gender.
+    // Emit pyramid_bin rows: share of each SINGLE YEAR of age × gender out of the
+    // total population (ages PYRAMID_TOP_AGE and over are grouped, e.g. "100+").
     // Shape matches the R script's pyramid chunk exactly:
     //   variable="Age", stratifier="Gender",
-    //   variable_value=age band, stratifier_value="Male"/"Female"
-    // The denominator is the total weight within each gender separately,
-    // so Male bars and Female bars each sum to 100%.
+    //   variable_value="0", "1", … "99", "100+", stratifier_value="Male"/"Female"
+    // The denominator is the total weight of BOTH genders, so all bars
+    // together sum to 100% (standard pyramid convention, matches the R script).
     {
       // gender → ageBand → {sumW, n}
       const pyrAcc = { Male: new Map(), Female: new Map() };
@@ -925,7 +1031,7 @@ export function aggregateSingleRun(rows, scenario, runId) {
       for (const r of yearRows) {
         const gender = r["Gender"]; // already recoded to "Male"/"Female"
         if (gender !== "Male" && gender !== "Female") continue;
-        const ageBand = r["Age"];   // already binned by binAge()
+        const ageBand = pyramidAge(r.AgeYears);   // single year, e.g. "34" or "90+"
         if (!ageBand) continue;
         const w = r.wgt;
 
@@ -937,14 +1043,17 @@ export function aggregateSingleRun(rows, scenario, runId) {
         ba.sumW += w; ba.n++;
       }
 
+      // Shares are of the TOTAL population (both genders), the standard
+      // pyramid convention: all bars together sum to 100%. Matches the R
+      // pre-aggregation script.
+      const totalW = pyrTot.Male.sumW + pyrTot.Female.sumW;
       for (const gender of ["Male","Female"]) {
-        const tot = pyrTot[gender];
         for (const [ageBand, ba] of pyrAcc[gender]) {
           metrics.push({year,scenario,run:runId,
             variable:"Age", variable_value:ageBand,
             stratifier:"Gender", stratifier_value:gender,
             metric_type:"pyramid_bin", n:ba.n,
-            metric_value: tot.sumW > 0 ? ba.sumW / tot.sumW : 0});
+            metric_value: totalW > 0 ? ba.sumW / totalW : 0});
         }
       }
     }
@@ -966,6 +1075,11 @@ export function aggregateSingleRun(rows, scenario, runId) {
 //   paired_upper_ci / paired_n_runs. This paired approach removes stochastic
 //   variation that is shared between matched runs — the 95% CI is computed as
 //   mean_delta ± 1.96 × SE, where SE = SD_delta / √(n_paired_runs).
+/** Minimum unweighted sample required in EVERY run for an estimate to be shown.
+ *  If any single run has fewer than this (including 0, i.e. the group is absent
+ *  from that run), the estimate, its CI and any paired delta are all suppressed. */
+export const MIN_RUN_SAMPLE = 20;
+
 /** Create a new empty accumulator for incremental cross-run aggregation. */
 export function createGroupedAccumulator() {
   return new Map();
@@ -1018,6 +1132,20 @@ export function finaliseAggregation(grouped) {
     }
   }
 
+  // Number of runs per scenario (the "Overall" rows exist in every run, so the
+  // largest per-group run count equals the total runs for that scenario).
+  // A group seen in fewer runs had a sample of 0 in at least one run.
+  const runsPerScenario = new Map();
+  for (const g of grouped.values()) {
+    if (g.count > (runsPerScenario.get(g.scenario) ?? 0)) runsPerScenario.set(g.scenario, g.count);
+  }
+  const baseOk = new Map();
+  for (const g of grouped.values()) {
+    if (g.scenario !== "baseline") continue;
+    const nonKey = `${g.year}|${g.variable}|${g.variable_value}|${g.stratifier}|${g.stratifier_value}|${g.metric_type}`;
+    baseOk.set(nonKey, g.minN >= MIN_RUN_SAMPLE && g.count >= runsPerScenario.get("baseline"));
+  }
+
   const finalRows = [];
   for (const [key, g] of grouped) {
     const { year, scenario, variable, variable_value, stratifier,
@@ -1032,16 +1160,24 @@ export function finaliseAggregation(grouped) {
     const mean_sample  = n_runs > 0 ? total_sample / n_runs : 0;
 
     let mean_value = mean;
-    let lower_ci   = mean_value - 1.96 * se_value;
-    let upper_ci   = mean_value + 1.96 * se_value;
-    if (total_sample < 20) { mean_value = NaN; lower_ci = NaN; upper_ci = NaN; }
+    // A 95% CI needs at least 2 runs: with 1 run the SD is undefined, so the
+    // interval is left blank (NaN) rather than drawn as a zero-width band.
+    let lower_ci   = n_runs >= 2 ? mean_value - 1.96 * se_value : NaN;
+    let upper_ci   = n_runs >= 2 ? mean_value + 1.96 * se_value : NaN;
+    // Suppress if ANY single run had fewer than MIN_RUN_SAMPLE observations
+    // behind this estimate (per-run minimum, not the pooled total).
+    // A group missing from some runs had 0 observations in those runs.
+    const suppressed = min_sample < MIN_RUN_SAMPLE || n_runs < (runsPerScenario.get(scenario) ?? 0);
+    if (suppressed) { mean_value = NaN; lower_ci = NaN; upper_ci = NaN; }
 
     let paired_mean_delta = NaN, paired_lower_ci = NaN, paired_upper_ci = NaN, paired_n_runs = 0;
     if (scenario !== "baseline") {
       const p = key.split("|");
       const nonKey = `${p[0]}|${p[2]}|${p[3]}|${p[4]}|${p[5]}|${p[6]}`;
       const bVals  = baseVals.get(nonKey);
-      if (bVals && runVals && runVals.size > 0) {
+      // Also suppress the paired delta if either side fails the per-run threshold
+      const baseSuppressed = !baseOk.get(nonKey);
+      if (!suppressed && !baseSuppressed && bVals && runVals && runVals.size > 0) {
         let pCount = 0, pMean = 0, pM2 = 0;
         for (const [seed, sVal] of runVals) {
           const bVal = bVals.get(seed);
@@ -1057,8 +1193,9 @@ export function finaliseAggregation(grouped) {
           const pSd = pCount > 1 ? Math.sqrt(pM2 / (pCount - 1)) : 0;
           const pSe = pSd / Math.sqrt(pCount);
           paired_mean_delta = pMean;
-          paired_lower_ci   = pMean - 1.96 * pSe;
-          paired_upper_ci   = pMean + 1.96 * pSe;
+          // Same rule for the paired delta: no interval from a single matched pair.
+          paired_lower_ci   = pCount >= 2 ? pMean - 1.96 * pSe : NaN;
+          paired_upper_ci   = pCount >= 2 ? pMean + 1.96 * pSe : NaN;
         }
       }
     }

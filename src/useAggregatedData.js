@@ -66,10 +66,6 @@ export const STRATIFIER_VALUE_LABELS = {
     "Not financially distressed": "Not financially distressed",
     "Financially distressed": "Financially distressed",
   },
-  "need of social care": {
-    "Does not need social care": "Does not need social care",
-    "Needs social care": "Needs social care",
-  },
 };
 
 /**
@@ -109,6 +105,7 @@ export const VARIABLE_DEFS = {
   "income quintile":            { type:"ordinal",     order:INCOME_QUINTILE_ORDER },
   "self-rated health":          { type:"ordinal",     order:["Excellent","VeryGood","Good","Fair","Poor"] },
   "hours worked":                             { type:"numeric" },
+  "population size":                          { type:"numeric" },
   "equivalised yearly disposable income":     { type:"numeric", incomeBinLabels:["£0–5k","£5–10k","£10–15k","£15–20k","£20–25k","£25–30k","£30–40k","£40–50k","£50k+"] },
   "gross personal employment income":         { type:"numeric", incomeBinLabels:["£0–500","£500–1k","£1–1.5k","£1.5–2k","£2–2.5k","£2.5–3k","£3–4k","£4–5k","£5k+"] },
   "capital income":                           { type:"numeric", incomeBinLabels:["£0–100","£100–500","£500–1k","£1–2k","£2k+"] },
@@ -127,8 +124,8 @@ export const VARIABLE_DEFS = {
   "partnership status":  { type:"categorical", order:["Single","Partnered"] },
   "universal credit benefits flag":   { type:"categorical", order:["Benefits received","No benefits received"] },
   "financial distress flag":  { type:"categorical", order:["Financially distressed","Not financially distressed"] },
-  "need of social care":      { type:"categorical", order:["Needs social care","Does not need social care"] },
- // "provided social care":     { type:"categorical", order:["Provides social care","Does not provide social care"] },
+  "provided care":            { type:"categorical", order:["Provides care","Does not provide care"] },
+  "received care":            { type:"categorical", order:["None","Informal","Mixed","Formal"] },
   "disability status":        { type:"categorical", order:["Has disability","No disability"] },
 };
 
@@ -152,6 +149,21 @@ export const STRATIFIER_DEFS = {
 /** Lower-cases + trims for use as a VARIABLE_DEFS/STRATIFIER_DEFS lookup key. */
 function normKey(s) { return (s||"").toString().toLowerCase().trim(); }
 /** Looks up a variable's definition by name (case/whitespace-insensitive). Falls back to `{type:"categorical", order:[]}` for anything not in VARIABLE_DEFS, so callers never need a null-check. */
+/**
+ * Display form of a variable name: Title Case ("Hours worked" → "Hours Worked",
+ * "Amount of benefits received per month" → "Amount of Benefits Received per Month").
+ * Short joining words stay lower case unless first; acronyms like "(MCS)" are kept.
+ * Display only — the names in the data, the R script and the CSV are unchanged.
+ */
+const TITLE_SMALL_WORDS = new Set(["a","an","and","as","at","by","for","in","of","on","or","per","the","to","vs"]);
+export function titleCase(name) {
+  if (!name) return name;
+  return String(name).split(" ").map((w, i) => {
+    if (i > 0 && TITLE_SMALL_WORDS.has(w.toLowerCase())) return w.toLowerCase();
+    return w.charAt(0).toUpperCase() + w.slice(1);
+  }).join(" ");
+}
+
 export function getVariableDef(name)   { return VARIABLE_DEFS[normKey(name)]   || { type:"categorical", order:[] }; }
 /** Same as getVariableDef() but for stratifiers, with a special-cased `{type:"none"}` for "Overall"/empty (i.e. "not stratified"). */
 export function getStratifierDef(name) {
@@ -243,7 +255,10 @@ const DECILE_RAMP = [
 const DIV_RED_TEAL = ["#8dcfda","#4ab8cc","#0ca1c4","#08829c","#055e71"];
 
 // ── Education: indigo ramp ────────────────────────────────────────────────────
-const INDIGO_EDU = ["#bac3ee","#4767f5","#0c2dc0"];
+// Evenly spaced from light to dark (lightness ≈ 80 / 55 / 17), so Medium and
+// High are easy to tell apart, including in greyscale. (Was #4767f5 / #0c2dc0,
+// two strong blues of similar brightness.)
+const INDIGO_EDU = ["#bac3ee","#5f7cf4","#14206e"];
 
 // ── Health: desaturated — tinted rather than traffic-light ───────────────────
 // Health: teal (excellent) → orange (poor), colourblind-safe.
@@ -546,6 +561,10 @@ export function uniqueValues(data, key) {
  * back to the raw key unchanged if nothing matches either table.
  */
 export function stratLabel(key, scope) {
+  // Numeric variables are stored with the value "Continuous Mean". On screen,
+  // name the variable itself (e.g. in a tooltip title), or say "Average"
+  // where there's no variable name to use (e.g. under a bar).
+  if (key === "Continuous Mean") return scope && normKey(scope) !== "continuous mean" ? titleCase(scope) : "Average";
   const scoped = scope ? STRATIFIER_VALUE_LABELS[normKey(scope)]?.[key] : undefined;
   if (scoped !== undefined) return scoped;
   return GENERIC_VALUE_LABELS[key] ?? key;
@@ -562,6 +581,7 @@ export function stratLabel(key, scope) {
  * @param {object[]} rows
  * @returns {object[]} one row per (variable_value, stratifier_value), with year:"Average"
  */
+const d3min = arr => { const v=arr.filter(x=>x!=null&&!isNaN(x)); return v.length ? Math.min(...v) : NaN; };
 export function averageAcrossYears(rows) {
   if (!rows?.length) return [];
   const groups = new Map();
@@ -571,12 +591,23 @@ export function averageAcrossYears(rows) {
     groups.get(key).push(d);
   });
   const mean = arr => { const v=arr.filter(x=>!isNaN(x)); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : NaN; };
-  return Array.from(groups.values()).map(group => ({
-    ...group[0], year:"Average",
-    mean_value: mean(group.map(d=>d.mean_value)),
-    lower_ci:   mean(group.map(d=>d.lower_ci)),
-    upper_ci:   mean(group.map(d=>d.upper_ci)),
-  }));
+  return Array.from(groups.values()).map(group => {
+    // A group hidden by the minimum-sample rule in ANY year stays hidden in the
+    // average: averaging only the years where it passed would show a value
+    // built partly from years where it was too small.
+    const anyHidden = group.some(d => d.mean_value == null || isNaN(d.mean_value));
+    return {
+      ...group[0], year:"Average",
+      mean_value: anyHidden ? NaN : mean(group.map(d=>d.mean_value)),
+      lower_ci:   anyHidden ? NaN : mean(group.map(d=>d.lower_ci)),
+      upper_ci:   anyHidden ? NaN : mean(group.map(d=>d.upper_ci)),
+      // Sample sizes summarise every year (they were copied from the first year).
+      mean_sample:  mean(group.map(d=>d.mean_sample)),
+      min_sample:   d3min(group.map(d=>d.min_sample)),
+      total_sample: group.reduce((t,d)=>t+(+d.total_sample||0),0),
+      n_runs:       d3min(group.map(d=>d.n_runs)),
+    };
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -628,7 +659,7 @@ export function parseCsvRow(d) {
   // Universal Credit Benefits Flag ships from the aggregation pipeline as
   // raw true/false rather than a relabeled category — every other
   // boolean-style variable (Disability Status, Financial distress,
-  // Need/Provided social care) is already relabeled upstream before export,
+  // Provided care) is already relabeled upstream before export,
   // so they never hit this; Universal Credit Benefits Flag is the one that
   // isn't. Relabelling it HERE, before it ever reaches stratLabel(), is
   // still worth doing even now that stratLabel() looks up per-stratifier
@@ -644,7 +675,12 @@ export function parseCsvRow(d) {
     else if (v===""||v==="na"||v==="nan"||v==="null"||v==="undefined") variable_value="Missing";
     // else: leave unchanged (e.g. already "Missing" from upstream)
   }
-  return {
+  // Enforce the same rule as parseCore.js (MIN_RUN_SAMPLE): if any single
+  // run had fewer than 20 observations, suppress the estimate and its delta.
+  // Only applied when the CSV actually has a minimum-sample column.
+  const rawMin = d.min_sample ?? d["Minimum Sample: Across Runs"];
+  const belowMin = rawMin !== undefined && rawMin !== "" && rawMin !== "NA" && !isNaN(+rawMin) && +rawMin < 20;
+  const out = {
     year:             +d.Year            || +d.year,
     scenario:         (d.scenario        || d.Scenario || "baseline").toLowerCase(),
     module:           d.module           || d.Module,
@@ -669,6 +705,14 @@ export function parseCsvRow(d) {
     paired_upper_ci:    parseCI(d.paired_upper_ci ?? d.paired_ci_upper),
     paired_n_runs:      +(d.paired_n_runs ?? 0) || 0,
   };
+  // No CI can be computed from a single run / single matched pair.
+  if (out.n_runs < 2) { out.lower_ci = out.upper_ci = NaN; }
+  if (out.paired_n_runs < 2) { out.paired_lower_ci = out.paired_upper_ci = NaN; }
+  if (belowMin) {
+    out.mean_value = out.lower_ci = out.upper_ci = NaN;
+    out.paired_mean_delta = out.paired_lower_ci = out.paired_upper_ci = NaN;
+  }
+  return out;
 }
 /** Parses a numeric field that may legitimately be missing/suppressed (empty string, "NaN", "NA") — returns NaN rather than 0 for those, so suppressed estimates aren't mistaken for a real zero value downstream. */
 function parseMaybeNaN(v) {
